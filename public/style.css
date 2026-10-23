@@ -145,6 +145,7 @@ td.lbl{font-family:var(--font-mono);font-weight:600;white-space:nowrap}
 .field{display:grid;gap:5px;min-width:0}
 .field label{font-size:12px;color:var(--muted);font-weight:500}
 .hint{font-size:11.5px;color:var(--faint)}
+.conflict{margin:10px 0 4px;padding:10px 12px;border-radius:12px;border:1px solid var(--danger);color:var(--danger);font-size:12.5px;line-height:1.5}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 input[type=text],input[type=number],select,textarea{width:100%;border:1px solid var(--stroke);background:var(--glass-2);border-radius:10px;padding:8px 10px;min-width:0}
 textarea{min-height:64px;resize:vertical}

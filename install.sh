@@ -9,7 +9,36 @@ c_ok(){ printf '\033[32m✓\033[0m %s\n' "$*"; }
 c_info(){ printf '\033[36m•\033[0m %s\n' "$*"; }
 c_err(){ printf '\033[31m✗\033[0m %s\n' "$*" >&2; }
 ask(){ local q="$1" def="${2:-}" a; read -r -p "$q${def:+ [$def]}: " a; echo "${a:-$def}"; }
-ask_secret(){ local q="$1" a; read -r -s -p "$q: " a; echo >&2; echo "$a"; }
+# Hasła trafiają do .env w apostrofach, więc sam apostrof jest niedozwolony.
+ask_secret(){
+  local q="$1" a
+  while :; do
+    read -r -s -p "$q: " a; echo >&2
+    [[ "$a" != *"'"* ]] && break
+    c_err "Hasło nie może zawierać apostrofu (')."
+  done
+  echo "$a"
+}
+# Nazwa bazy i użytkownika idą do poleceń SQL, więc tylko litery, cyfry i podkreślnik.
+ask_ident(){
+  local q="$1" def="$2" a
+  while :; do
+    a="$(ask "$q" "$def")"
+    [[ "$a" =~ ^[A-Za-z0-9_]{1,32}$ ]] && break
+    c_err "Dozwolone są tylko litery, cyfry i podkreślnik (do 32 znaków)."
+  done
+  echo "$a"
+}
+# Bez apostrofów i znaków nowej linii, bo wartości trafiają do .env w apostrofach.
+ask_plain(){
+  local q="$1" def="${2:-}" a
+  while :; do
+    a="$(ask "$q" "$def")"
+    [[ "$a" != *"'"* ]] && break
+    c_err "Wartość nie może zawierać apostrofu (')."
+  done
+  echo "$a"
+}
 yes_no(){ local a; read -r -p "$1 [T/n]: " a; [[ -z "$a" || "$a" =~ ^[TtYy] ]]; }
 
 echo
@@ -37,45 +66,51 @@ c_ok "Zależności zainstalowane"
 if [[ -f .env ]]; then
   c_ok "Plik .env już istnieje, zostawiam go bez zmian"
 else
-  DB_HOST="$(ask 'Host MySQL' 'localhost')"
-  DB_PORT="$(ask 'Port MySQL' '3306')"
-  DB_NAME="$(ask 'Nazwa bazy' 'rack_inventory')"
-  DB_USER="$(ask 'Użytkownik bazy' 'rack')"
+  DB_HOST="$(ask_plain 'Host MySQL' 'localhost')"
+  DB_PORT="$(ask_plain 'Port MySQL' '3306')"
+  DB_NAME="$(ask_ident 'Nazwa bazy' 'rack_inventory')"
+  DB_USER="$(ask_ident 'Użytkownik bazy' 'rack')"
 
-  if yes_no "Utworzyć teraz bazę i użytkownika MySQL? (potrzebny dostęp: sudo mysql)"; then
+  # `sudo mysql` działa tylko na tym serwerze, więc automatyczne zakładanie bazy tylko dla lokalnego MySQL.
+  if [[ "$DB_HOST" == "localhost" || "$DB_HOST" == "127.0.0.1" ]] && yes_no "Utworzyć teraz bazę i użytkownika MySQL? (potrzebny dostęp: sudo mysql)"; then
     DB_PASSWORD="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
-    USER_HOST="localhost"; [[ "$DB_HOST" != "localhost" && "$DB_HOST" != "127.0.0.1" ]] && USER_HOST="%"
     sudo mysql <<SQL
 CREATE DATABASE IF NOT EXISTS \`$DB_NAME\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '$DB_USER'@'$USER_HOST' IDENTIFIED BY '$DB_PASSWORD';
-ALTER USER '$DB_USER'@'$USER_HOST' IDENTIFIED BY '$DB_PASSWORD';
-GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'$USER_HOST';
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
+ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost';
 FLUSH PRIVILEGES;
 SQL
-    c_ok "Utworzono bazę $DB_NAME i użytkownika $DB_USER@$USER_HOST (hasło zapisane w .env)"
+    c_ok "Utworzono bazę $DB_NAME i użytkownika $DB_USER@localhost (hasło zapisane w .env)"
   else
+    if [[ "$DB_HOST" != "localhost" && "$DB_HOST" != "127.0.0.1" ]]; then
+      c_info "Baza jest na innym serwerze ($DB_HOST). Załóż ją tam ręcznie, patrz README → „Instalacja ręczna”."
+    fi
     DB_PASSWORD="$(ask_secret 'Hasło użytkownika bazy')"
   fi
 
-  HOST="$(ask 'Adres nasłuchu aplikacji (127.0.0.1 za nginx, 0.0.0.0 dla całej sieci LAN)' '127.0.0.1')"
-  PORT="$(ask 'Port aplikacji' '3080')"
+  HOST="$(ask_plain 'Adres nasłuchu aplikacji (127.0.0.1 za Apache/nginx, 0.0.0.0 dla całej sieci LAN bez serwera WWW)' '127.0.0.1')"
+  PORT="$(ask_plain 'Port aplikacji' '3080')"
   AUTH_USER=""; AUTH_PASSWORD=""
   if yes_no "Włączyć logowanie (login i hasło do aplikacji)?"; then
-    AUTH_USER="$(ask 'Login' 'admin')"
+    AUTH_USER="$(ask_plain 'Login' 'admin')"
     AUTH_PASSWORD="$(ask_secret 'Hasło do aplikacji')"
+  elif [[ "$HOST" != "127.0.0.1" && "$HOST" != "localhost" ]]; then
+    c_info "Uwaga: bez logowania każdy w sieci może zmieniać i usuwać dane."
   fi
 
+  # Wartości w apostrofach: dotenv czyta je dosłownie, więc # $ ` i spacje w hasłach są bezpieczne.
   umask 077
   cat > .env <<ENV
-HOST=$HOST
-PORT=$PORT
-DB_HOST=$DB_HOST
-DB_PORT=$DB_PORT
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
-AUTH_USER=$AUTH_USER
-AUTH_PASSWORD=$AUTH_PASSWORD
+HOST='$HOST'
+PORT='$PORT'
+DB_HOST='$DB_HOST'
+DB_PORT='$DB_PORT'
+DB_NAME='$DB_NAME'
+DB_USER='$DB_USER'
+DB_PASSWORD='$DB_PASSWORD'
+AUTH_USER='$AUTH_USER'
+AUTH_PASSWORD='$AUTH_PASSWORD'
 ENV
   umask 022
   c_ok "Zapisano .env (uprawnienia 600)"
@@ -123,9 +158,9 @@ else
   c_info "Uruchom ręcznie: npm start"
 fi
 
-PORT_SHOW="$(grep -E '^PORT=' .env | cut -d= -f2)"
-HOST_SHOW="$(grep -E '^HOST=' .env | cut -d= -f2)"
+PORT_SHOW="$(grep -E '^PORT=' .env | cut -d= -f2 | tr -d "'\"")"
+HOST_SHOW="$(grep -E '^HOST=' .env | cut -d= -f2 | tr -d "'\"")"
 echo
 c_ok "Gotowe. Aplikacja: http://${HOST_SHOW/0.0.0.0/$(hostname -I 2>/dev/null | awk '{print $1}')}:${PORT_SHOW:-3080}"
-echo "  Za nginx: zobacz deploy/nginx.conf i sekcję „nginx” w README.md"
+echo "  Za Apache: deploy/apache.conf i sekcja „Apache, nginx i HTTPS” w README.md"
 echo

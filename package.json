@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "description": "Inwentaryzacja szafy sieciowej: porty patchpaneli i switchy, patchcordy, trasy kabli i plan przebudowy. Node.js + MySQL.",
   "private": true,
+  "license": "MIT",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "db:init": "node src/init-db.js",
-    "db:seed": "node src/init-db.js --seed"
+    "db:seed": "node src/init-db.js --seed",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"

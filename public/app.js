@@ -22,6 +22,7 @@ let loaded = false, online = true, busy = false;
 let bulk = {on:false, set:new Set()};
 let searchQ = '';
 let devForm = null;          // null | 'new' | 'edit'
+let devDraft = null;         // wartości wpisane w formularzu urządzenia (przetrwają przerysowanie)
 let pendingImport = null;
 let confirmDelete = false;
 let history = null;          // {key, rows}
@@ -38,7 +39,7 @@ async function api(method, url, body){
   });
   let data = null;
   try { data = await res.json(); } catch(e) {}
-  if (!res.ok) throw new Error((data && data.error) || ('HTTP '+res.status));
+  if (!res.ok){ const err = new Error((data && data.error) || ('HTTP '+res.status)); err.status = res.status; throw err; }
   return data;
 }
 function applyState(s){
@@ -46,7 +47,8 @@ function applyState(s){
   devices = s.devices; loaded = true; online = true;
   if (!sel.dev || !devices[sel.dev]) { sel.dev = sortedIds()[0] || null; sel.port = null; }
 }
-async function mutate(method, url, body, okMsg){
+// onError(e) może obsłużyć błąd sam i zwrócić true, żeby nie pokazywać ogólnego komunikatu.
+async function mutate(method, url, body, okMsg, onError){
   if (busy) return null;
   busy = true;
   try {
@@ -55,7 +57,7 @@ async function mutate(method, url, body, okMsg){
     if (okMsg) toast(okMsg);
     return s;
   } catch(e) {
-    toast('Nie udało się: '+e.message);
+    if (!(onError && onError(e))) toast('Nie udało się: '+e.message);
     return null;
   } finally {
     busy = false;
@@ -100,7 +102,7 @@ let toastT;
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,2600); }
 
 /* ---------- render ---------- */
-function render(){ renderHeader(); renderRack(); renderDevice(); renderEditor(); renderResults(); }
+function render(){ renderHeader(); renderRack(); renderDevice(true); renderEditor(); renderResults(); }
 
 function renderHeader(){
   $('modeLine').textContent = !loaded ? 'Łączenie z serwerem…' : online ? 'Dane w bazie MySQL · odświeżanie co 20 s' : 'Brak połączenia z serwerem';
@@ -161,13 +163,13 @@ function portsMarkup(id){
 }
 function deviceForm(d){
   d = d || {name:'',short:'',kind:'patch',portCount:24,sfp:0,status:'active',model:'',notes:''};
-  return `<div class="dialog"><div class="eyebrow">${devForm==='new'?'Nowe urządzenie':'Edycja urządzenia'}</div>
+  return `<div class="dialog" data-form="${devForm}"><div class="eyebrow">${devForm==='new'?'Nowe urządzenie':'Edycja urządzenia'}</div>
   <div class="form">
     <div class="row2"><div class="field"><label for="f_name">Nazwa</label><input id="f_name" type="text" value="${esc(d.name)}"></div>
     <div class="field"><label for="f_short">Prefiks etykiet</label><input id="f_short" type="text" value="${esc(d.short)}" placeholder="np. B lub PKN01"></div></div>
     <div class="row2"><div class="field"><label for="f_kind">Typ</label><select id="f_kind">${Object.entries(KINDS).map(([k,v])=>`<option value="${k}" ${d.kind===k?'selected':''}>${v}</option>`).join('')}</select></div>
     <div class="field"><label for="f_status">Stan</label><select id="f_status">${Object.entries(DEVSTATUS).map(([k,v])=>`<option value="${k}" ${d.status===k?'selected':''}>${v}</option>`).join('')}</select></div></div>
-    <div class="row2"><div class="field"><label for="f_ports">Porty RJ45 / LC</label><input id="f_ports" type="number" min="1" max="96" value="${d.portCount}"></div>
+    <div class="row2"><div class="field"><label for="f_ports">Porty RJ45 / LC</label><input id="f_ports" type="number" min="1" max="96" value="${Number.isFinite(d.portCount)?d.portCount:''}"></div>
     <div class="field"><label for="f_sfp">Porty SFP (uplink)</label><input id="f_sfp" type="number" min="0" max="8" value="${d.sfp||0}"></div></div>
     <div class="field"><label for="f_model">Model / producent</label><input id="f_model" type="text" value="${esc(d.model)}" placeholder="np. HPE Aruba 2530-48G"></div>
     <div class="field"><label for="f_dnotes">Notatki</label><textarea id="f_dnotes">${esc(d.notes)}</textarea></div>
@@ -178,11 +180,15 @@ function deviceForm(d){
     </div>
   </div></div>`;
 }
-function renderDevice(){
+// force=false (odświeżanie w tle, wyszukiwarka) nie przerysowuje otwartego formularza, żeby nie przerywać pisania.
+// force=true przerysowuje, zachowując to, co już wpisano.
+function renderDevice(force){
   const el = $('device');
+  const open = el.querySelector('.dialog');
+  if (devForm && open && !force) return;
+  if (devForm && open && open.dataset.form === devForm) devDraft = devFromForm();
   if (!loaded){ el.innerHTML = '<div class="empty">Wczytywanie racka…</div>'; return; }
-  if (devForm==='new'){ el.innerHTML = deviceForm(null); return; }
-  if (devForm==='edit' && el.querySelector('#f_name')) return; // nie nadpisuj formularza podczas odświeżania
+  if (devForm==='new'){ el.innerHTML = deviceForm(devDraft); return; }
   const id = sel.dev, d = devices[id];
   if (!d){
     el.innerHTML = `<div class="empty"><h3>Rack jest pusty</h3><p>Wczytaj układ z inwentaryzacji (patchpanele A–H, switche PKN01–04, CAM patch, HPSW34, dwa żółte switche) albo dodaj urządzenia ręcznie.</p>
@@ -201,7 +207,7 @@ function renderDevice(){
       ${d.notes?`<p class="dev-notes">${esc(d.notes)}</p>`:''}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" data-act="bulk">${bulk.on?'Zakończ zaznaczanie':'Zaznacz wiele'}</button><button class="btn small" data-act="editDev">Edytuj urządzenie</button></div>
     </div>
-    ${devForm==='edit'?deviceForm(d):''}
+    ${devForm==='edit'?deviceForm(devDraft||d):''}
     <div class="legend">${Object.entries(STATUS).map(([k,v])=>`<span><i class="dot" style="background:var(${v.v})"></i>${v.l}</span>`).join('')}<span><i class="dot" style="background:#fff;border-radius:50%;box-shadow:0 0 0 1.5px var(--stroke)"></i>zweryfikowany</span><span>pasek = kolor kabla</span></div>
     <div class="faceplate" style="overflow-x:auto">
       <div class="ears"><span>${esc(d.short||d.name)}</span><span>${d.kind==='switch'?'nieparzyste u góry · parzyste u dołu':'widok od frontu'}</span></div>
@@ -253,6 +259,7 @@ function renderEditor(){
       <div style="display:flex;gap:6px"><button class="btn small" data-act="prev" aria-label="Poprzedni port">‹</button><button class="btn small" data-act="next" aria-label="Następny port">›</button><button class="btn small close-sheet" data-act="close">Zamknij</button></div>
     </div>
     <div class="route">${routeOf(id,n)}</div>
+    ${r._conflict?`<div class="conflict">Ktoś inny zmienił ten port, kiedy go edytowałeś. Teraz w bazie: <b>${esc(summ(portRec(id,n))||'pusty port')}</b>. Poniżej są Twoje zmiany. Kliknij Zapisz, żeby je zachować zamiast tamtych.</div>`:''}
     <div class="form">
       <div class="field"><label>Status portu</label><div class="seg">${Object.entries(STATUS).map(([k,v])=>`<button type="button" data-st="${k}" aria-pressed="${r.status===k}"><i class="dot" style="background:var(${v.v})"></i>${v.l}</button>`).join('')}</div></div>
       <div class="field"><label for="e_ldev">Patchcord w racku — drugi koniec</label>
@@ -308,23 +315,41 @@ function readDraft(){
 function draftDirty(){
   if (!draft || !sel.port) return false;
   readDraft();
-  const a = clone(draft); delete a._key; delete a.updated;
-  const b = clone(portRec(sel.dev, sel.port)); delete b.updated; if (!b.status) b.status='unknown';
+  const a = clone(draft); delete a._key; delete a._conflict; delete a.updated; delete a.rev;
+  const b = clone(portRec(sel.dev, sel.port)); delete b.updated; delete b.rev; if (!b.status) b.status='unknown';
   const norm = o => JSON.stringify(Object.keys(o).sort().reduce((m,k)=>{ if (o[k]!=='' && o[k]!==false && o[k]!=null) m[k]=o[k]; return m; },{}));
   return norm(a) !== norm(b);
 }
+// Zapis z wykrywaniem konfliktu: serwer odrzuca zapis (409), jeśli port zmienił się od otwarcia edycji.
+// Wtedy szkic zostaje, a kolejne „Zapisz” nadpisuje aktualną wersję.
 async function savePort(){
   readDraft();
-  const body = clone(draft); delete body._key; delete body.updated;
+  const body = clone(draft); delete body._key; delete body._conflict; delete body.updated; delete body.rev;
+  body.baseRev = draft.rev || null;
   if (body.link && (!body.link.dev || !body.link.port)) delete body.link;
-  const ok = await mutate('PUT', `api/ports/${encodeURIComponent(sel.dev)}/${sel.port}`, body, 'Zapisano '+label(sel.dev, sel.port));
-  if (ok) draft = null;
-  return ok;
+  let conflict = false;
+  const ok = await mutate('PUT', `api/ports/${encodeURIComponent(sel.dev)}/${sel.port}`, body, 'Zapisano '+label(sel.dev, sel.port),
+    e => (conflict = e.status === 409));
+  if (ok){ draft = null; return ok; }
+  if (conflict){
+    const d = draft;
+    await refresh(false);
+    d.rev = portRec(sel.dev, sel.port).rev; d._conflict = true;
+    renderEditor();
+  }
+  return null;
+}
+// Pyta przed porzuceniem niezapisanych zmian w karcie portu.
+function canLeavePort(){
+  return !draftDirty() || confirm(`Port ${label(sel.dev, sel.port)} ma niezapisane zmiany. Porzucić je?`);
 }
 function step(dir){
+  if (!canLeavePort()) return;
   const t = totalPorts(devices[sel.dev]); let n = Number(sel.port)+dir;
   if (n<1) n=t; if (n>t) n=1; sel.port = n; draft = null; render();
 }
+function openDevForm(mode){ devForm = mode; devDraft = null; confirmDelete = false; if (mode==='new') { sel.port = null; draft = null; } }
+function closeDevForm(){ devForm = null; devDraft = null; confirmDelete = false; }
 function devFromForm(){
   return {
     name: $('f_name').value.trim(), short: $('f_short').value.trim(), kind: $('f_kind').value, status: $('f_status').value,
@@ -336,11 +361,19 @@ function devFromForm(){
 document.addEventListener('click', async e => {
   const t = e.target.closest('[data-dev],[data-port],[data-act],[data-st],[data-color],[data-goto]');
   if (!t) return;
-  if (t.classList.contains('ru')){ sel.dev = t.dataset.dev; sel.port = null; draft=null; devForm=null; confirmDelete=false; bulk={on:false,set:new Set()}; render(); return; }
-  if (t.dataset.goto){ const [id,n] = t.dataset.goto.split('#'); sel.dev=id; sel.port=Number(n); draft=null; devForm=null; render(); return; }
+  if (t.classList.contains('ru')){
+    if (!canLeavePort()) return;
+    sel.dev = t.dataset.dev; sel.port = null; draft=null; closeDevForm(); bulk={on:false,set:new Set()}; render(); return;
+  }
+  if (t.dataset.goto){
+    const [id,n] = t.dataset.goto.split('#');
+    if ((id!==sel.dev || Number(n)!==sel.port) && !canLeavePort()) return;
+    sel.dev=id; sel.port=Number(n); draft=null; closeDevForm(); render(); return;
+  }
   if (t.dataset.port !== undefined && t.closest('#device')){
     const n = Number(t.dataset.port);
-    if (bulk.on){ bulk.set.has(n)?bulk.set.delete(n):bulk.set.add(n); renderDevice(); return; }
+    if (bulk.on){ bulk.set.has(n)?bulk.set.delete(n):bulk.set.add(n); renderDevice(true); return; }
+    if (n === sel.port || !canLeavePort()) return;
     sel.port = n; draft = null; render(); return;
   }
   if (t.dataset.st && t.closest('#editor')){ readDraft(); draft.status = t.dataset.st; renderEditor(); return; }
@@ -350,24 +383,40 @@ document.addEventListener('click', async e => {
   switch (a){
     case 'save': if (await savePort()) render(); break;
     case 'saveNext': if (await savePort()) step(1); break;
-    case 'clearPort':
-      if (await mutate('PUT', `api/ports/${encodeURIComponent(sel.dev)}/${sel.port}`, {status:'unknown'}, 'Wyczyszczono port')) { draft=null; render(); }
+    case 'clearPort': {
+      const body = {status:'unknown', baseRev: portRec(sel.dev, sel.port).rev || null};
+      const s = await mutate('PUT', `api/ports/${encodeURIComponent(sel.dev)}/${sel.port}`, body, 'Wyczyszczono port',
+        e => { if (e.status !== 409) return false; toast('Ktoś inny właśnie zmienił ten port. Sprawdź dane przed wyczyszczeniem.'); return true; });
+      if (s) { draft=null; render(); } else refresh(false);
       break;
+    }
     case 'prev': step(-1); break;
     case 'next': step(1); break;
-    case 'close': sel.port=null; draft=null; render(); break;
+    case 'close': if (canLeavePort()) { sel.port=null; draft=null; render(); } break;
     case 'history':
       try { history = {key: sel.dev+'#'+sel.port, rows: await api('GET', `api/ports/${encodeURIComponent(sel.dev)}/${sel.port}/history`)}; readDraft(); renderEditor(); }
       catch(err){ toast('Nie udało się pobrać historii'); }
       break;
     case 'loadTemplate': if (await mutate('POST','api/seed',{},'Wczytano układ racka')) { sel.dev = sortedIds()[0]; render(); } break;
-    case 'newDev': devForm='new'; sel.port=null; render(); break;
-    case 'editDev': devForm = devForm==='edit'?null:'edit'; confirmDelete=false; $('device').innerHTML=''; renderDevice(); break;
-    case 'devCancel': devForm=null; confirmDelete=false; $('device').innerHTML=''; renderDevice(); break;
+    case 'newDev': if (canLeavePort()) { openDevForm('new'); render(); } break;
+    case 'editDev': if (devForm==='edit') closeDevForm(); else openDevForm('edit'); renderDevice(true); break;
+    case 'devCancel': closeDevForm(); renderDevice(true); break;
     case 'devSave': {
       const body = devFromForm();
+      if (devForm==='edit'){
+        // Zmniejszenie liczby portów kasuje opis portów spoza nowego zakresu, więc najpierw pytamy.
+        const d = devices[sel.dev];
+        const pc = Number.isFinite(body.portCount) ? Math.min(96, Math.max(1, body.portCount)) : d.portCount;
+        const total = pc + Math.min(8, Math.max(0, body.sfp));
+        const lost = Object.keys(d.ports||{}).map(Number).filter(n => n > total).sort((a,b)=>a-b);
+        if (lost.length && !confirm(`Po zmianie urządzenie będzie miało ${total} portów. Opis ${lost.length} portów zostanie usunięty (${lost.map(n=>label(sel.dev,n)).join(', ')}), a podłączone do nich patchcordy odpięte. Kontynuować?`)) break;
+      }
       const s = devForm==='new' ? await mutate('POST','api/devices',body,'Dodano urządzenie') : await mutate('PUT','api/devices/'+encodeURIComponent(sel.dev),body,'Zapisano urządzenie');
-      if (s){ if (s.id) { sel.dev = s.id; sel.port=null; } devForm=null; $('device').innerHTML=''; render(); }
+      if (s){
+        if (s.id) { sel.dev = s.id; sel.port=null; }
+        if (sel.port && devices[sel.dev] && sel.port > totalPorts(devices[sel.dev])) { sel.port=null; draft=null; }
+        closeDevForm(); render();
+      }
       break;
     }
     case 'devUp': case 'devDown': {
@@ -377,13 +426,13 @@ document.addEventListener('click', async e => {
       if (await mutate('POST','api/devices/reorder',{ids})) renderRack();
       break;
     }
-    case 'devDel': confirmDelete=true; $('device').innerHTML=''; renderDevice(); break;
+    case 'devDel': confirmDelete=true; renderDevice(true); break;
     case 'devDelYes':
-      if (await mutate('DELETE','api/devices/'+encodeURIComponent(sel.dev),null,'Usunięto urządzenie')){ sel.dev = sortedIds()[0]||null; sel.port=null; devForm=null; confirmDelete=false; $('device').innerHTML=''; render(); }
+      if (await mutate('DELETE','api/devices/'+encodeURIComponent(sel.dev),null,'Usunięto urządzenie')){ sel.dev = sortedIds()[0]||null; sel.port=null; draft=null; closeDevForm(); render(); }
       break;
-    case 'bulk': bulk = {on:!bulk.on, set:new Set()}; renderDevice(); break;
-    case 'bulkAll': for (let n=1;n<=totalPorts(devices[sel.dev]);n++) bulk.set.add(n); renderDevice(); break;
-    case 'bulkNone': bulk.set.clear(); renderDevice(); break;
+    case 'bulk': bulk = {on:!bulk.on, set:new Set()}; renderDevice(true); break;
+    case 'bulkAll': for (let n=1;n<=totalPorts(devices[sel.dev]);n++) bulk.set.add(n); renderDevice(true); break;
+    case 'bulkNone': bulk.set.clear(); renderDevice(true); break;
     case 'bulkSet': case 'bulkVerify': {
       const body = {dev: sel.dev, ports:[...bulk.set]};
       if (a==='bulkSet') body.status = t.dataset.st; else body.verified = true;
@@ -405,7 +454,7 @@ document.addEventListener('change', e => {
 });
 let qT;
 $('q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(()=>{ searchQ = e.target.value.trim().toLowerCase(); renderDevice(); renderResults(); }, 150); });
-$('btnAddDev').addEventListener('click', () => { devForm='new'; sel.port=null; render(); });
+$('btnAddDev').addEventListener('click', () => { if (canLeavePort()) { openDevForm('new'); render(); } });
 $('importFile').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
   const rd = new FileReader();
@@ -422,7 +471,7 @@ $('importFile').addEventListener('change', e => {
 });
 document.addEventListener('keydown', e => {
   if (!sel.port || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
-  if (e.key==='ArrowRight') step(1); else if (e.key==='ArrowLeft') step(-1); else if (e.key==='Escape'){ sel.port=null; draft=null; render(); }
+  if (e.key==='ArrowRight') step(1); else if (e.key==='ArrowLeft') step(-1); else if (e.key==='Escape' && canLeavePort()){ sel.port=null; draft=null; render(); }
 });
 matchMedia('(max-width:1180px)').addEventListener?.('change', () => { readDraft(); renderEditor(); });
 
