@@ -17,7 +17,20 @@ const DEV_STATUS = ['active', 'unused', 'remove'];
 const PORT_STATUS = ['unknown', 'used', 'free', 'reserved', 'broken'];
 const TEXT_FIELDS = { color: 40, length: 20, cord: 120, dest: 255, endpoint: 255, vlan: 40, plan: 255, notes: 5000 };
 const CORD_FIELDS = ['color', 'length', 'cord']; // opis patchcorda, wspólny dla obu końców
-const STATUS_PL = { unknown: 'Do ustalenia', used: 'Zajęty', free: 'Wolny', reserved: 'Rezerwacja', broken: 'Uszkodzony' };
+// Eksport CSV w języku interfejsu (?lang=pl|en|nl|cs). Kolory są zapisane w bazie po polsku.
+const CSV_TEXT = {
+  pl: { head: ['Rack', 'Urządzenie', 'Port', 'Etykieta', 'Status', 'Patchcord do', 'Dokąd prowadzi', 'Urządzenie końcowe', 'VLAN', 'Kolor', 'Długość', 'Etykieta kabla', 'Zweryfikowany', 'Plan', 'Notatki', 'Zmiana'],
+    status: { unknown: 'Do ustalenia', used: 'Zajęty', free: 'Wolny', reserved: 'Rezerwacja', broken: 'Uszkodzony' }, yes: 'tak', file: 'rack-inwentaryzacja', colors: {} },
+  en: { head: ['Rack', 'Device', 'Port', 'Label', 'Status', 'Patch cord to', 'Leads to', 'End device', 'VLAN', 'Colour', 'Length', 'Cable label', 'Verified', 'Plan', 'Notes', 'Changed'],
+    status: { unknown: 'To check', used: 'In use', free: 'Free', reserved: 'Reserved', broken: 'Broken' }, yes: 'yes', file: 'rack-inventory',
+    colors: { czarny: 'black', czerwony: 'red', niebieski: 'blue', zielony: 'green', 'pomarańczowy': 'orange', 'biały': 'white', 'żółty': 'yellow', szary: 'grey', 'różowy': 'pink', 'turkusowy (światłowód)': 'turquoise (fibre)' } },
+  nl: { head: ['Rack', 'Apparaat', 'Poort', 'Label', 'Status', 'Patchkabel naar', 'Leidt naar', 'Eindapparaat', 'VLAN', 'Kleur', 'Lengte', 'Kabellabel', 'Geverifieerd', 'Plan', 'Notities', 'Gewijzigd'],
+    status: { unknown: 'Nog te bepalen', used: 'In gebruik', free: 'Vrij', reserved: 'Gereserveerd', broken: 'Defect' }, yes: 'ja', file: 'rack-inventarisatie',
+    colors: { czarny: 'zwart', czerwony: 'rood', niebieski: 'blauw', zielony: 'groen', 'pomarańczowy': 'oranje', 'biały': 'wit', 'żółty': 'geel', szary: 'grijs', 'różowy': 'roze', 'turkusowy (światłowód)': 'turquoise (glasvezel)' } },
+  cs: { head: ['Rack', 'Zařízení', 'Port', 'Štítek', 'Stav', 'Propojeno s', 'Vede do', 'Koncové zařízení', 'VLAN', 'Barva', 'Délka', 'Štítek kabelu', 'Ověřeno', 'Plán', 'Poznámky', 'Změna'],
+    status: { unknown: 'K ověření', used: 'Obsazený', free: 'Volný', reserved: 'Rezervovaný', broken: 'Vadný' }, yes: 'ano', file: 'inventura-racku',
+    colors: { czarny: 'černá', czerwony: 'červená', niebieski: 'modrá', zielony: 'zelená', 'pomarańczowy': 'oranžová', 'biały': 'bílá', 'żółty': 'žlutá', szary: 'šedá', 'różowy': 'růžová', 'turkusowy (światłowód)': 'tyrkysová (optika)' } },
+};
 
 const app = express();
 app.disable('x-powered-by');
@@ -32,7 +45,7 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const SESSION_COOKIE = 'rack_session';
 const SESSION_MS = 12 * 60 * 60 * 1000;        // bez „Zapamiętaj mnie”
 const REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;  // z „Zapamiętaj mnie”
-const PUBLIC_FILES = new Set(['/login.html', '/style.css', '/favicon.svg']);
+const PUBLIC_FILES = new Set(['/login.html', '/style.css', '/favicon.svg', '/i18n.js']);
 const authFails = new Map(); // ip -> { n, reset }
 
 let SESSION_SECRET = process.env.SESSION_SECRET || '';
@@ -112,7 +125,7 @@ if (AUTH_ON) {
     // Skrypty (np. curl) mogą logować się nagłówkiem HTTP Basic.
     const h = req.headers.authorization || '';
     if (h.startsWith('Basic ')) {
-      if (authBlocked(req.ip)) return res.status(429).json({ error: 'Za dużo nieudanych prób logowania. Spróbuj ponownie za kilka minut.' });
+      if (authBlocked(req.ip)) return res.status(429).json({ error: 'Za dużo nieudanych prób logowania. Spróbuj ponownie za kilka minut.', code: 'too_many_attempts' });
       const [u, ...rest] = Buffer.from(h.slice(6), 'base64').toString('utf8').split(':');
       if (credentialsOk(u, rest.join(':'))) {
         authFails.delete(req.ip);
@@ -122,7 +135,7 @@ if (AUTH_ON) {
       authFailed(req.ip);
     }
     if (PUBLIC_FILES.has(req.path)) return next();
-    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Nie jesteś zalogowany albo sesja wygasła', login: true });
+    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Nie jesteś zalogowany albo sesja wygasła', code: 'not_logged_in', login: true });
     if (req.method === 'GET' && ['/', '/index.html', '/login'].includes(req.path)) return res.redirect(302, 'login.html');
     res.status(401).send('Wymagane logowanie');
   });
@@ -131,7 +144,11 @@ if (AUTH_ON) {
 app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'] }));
 
 /* ---------- pomocnicze ---------- */
-class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+// code + params pozwalają frontendowi pokazać komunikat w języku użytkownika (klucze err.* w public/i18n.js);
+// treść po polsku zostaje dla API i logów.
+class HttpError extends Error {
+  constructor(status, msg, code, params) { super(msg); this.status = status; this.code = code; this.params = params; }
+}
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const who = (req) => (req.user || req.ip || '').toString().slice(0, 64);
 
@@ -203,7 +220,7 @@ async function getState(db = pool, withRev = true) {
 }
 async function rackOrThrow(db, id) {
   const [[r]] = await db.query('SELECT * FROM racks WHERE id=?', [String(id)]);
-  if (!r) throw new HttpError(404, `Nie ma racka „${id}”`);
+  if (!r) throw new HttpError(404, `Nie ma racka „${id}”`, 'rack_not_found', { id });
   return r;
 }
 function rackFields(b, base = {}) {
@@ -227,11 +244,11 @@ async function nextOrder(c, rackId) {
 }
 async function deviceOrThrow(db, id) {
   const [[d]] = await db.query('SELECT * FROM devices WHERE id=?', [id]);
-  if (!d) throw new HttpError(404, `Nie ma urządzenia „${id}”`);
+  if (!d) throw new HttpError(404, `Nie ma urządzenia „${id}”`, 'dev_not_found', { id });
   return d;
 }
 function checkPort(d, n) {
-  if (!Number.isInteger(n) || n < 1 || n > d.port_count + d.sfp) throw new HttpError(400, `Port ${n} nie istnieje w ${d.name}`);
+  if (!Number.isInteger(n) || n < 1 || n > d.port_count + d.sfp) throw new HttpError(400, `Port ${n} nie istnieje w ${d.name}`, 'port_not_found', { n, dev: d.name });
 }
 function deviceFields(b, base = {}) {
   const f = {
@@ -318,7 +335,7 @@ app.post('/api/seed', wrap(async (req, res) => {
   const b = req.body || {};
   await withTx(async (c) => {
     const [[{ n }]] = await c.query('SELECT COUNT(*) AS n FROM devices');
-    if (n > 0) throw new HttpError(409, 'Układ z inwentaryzacji można wczytać tylko do pustej bazy');
+    if (n > 0) throw new HttpError(409, 'Układ z inwentaryzacji można wczytać tylko do pustej bazy', 'seed_not_empty');
     const rackId = b.rack ? (await rackOrThrow(c, b.rack)).id : await ensureDefaultRack(c);
     let order = 10;
     for (const [id, name, short, kind, pc, sfp, status, model, notes] of TEMPLATE) {
@@ -354,9 +371,9 @@ app.delete('/api/racks/:id', wrap(async (req, res) => {
   await withTx(async (c) => {
     const r = await rackOrThrow(c, req.params.id);
     const [[{ n }]] = await c.query('SELECT COUNT(*) AS n FROM devices WHERE rack_id=?', [r.id]);
-    if (n > 0) throw new HttpError(409, `W racku „${r.name}” są urządzenia (${n}). Przenieś je albo usuń.`);
+    if (n > 0) throw new HttpError(409, `W racku „${r.name}” są urządzenia (${n}). Przenieś je albo usuń.`, 'rack_not_empty', { name: r.name, n });
     const [[{ all }]] = await c.query('SELECT COUNT(*) AS `all` FROM racks');
-    if (all <= 1) throw new HttpError(409, 'Musi zostać co najmniej jeden rack');
+    if (all <= 1) throw new HttpError(409, 'Musi zostać co najmniej jeden rack', 'last_rack');
     await c.query('DELETE FROM racks WHERE id=?', [r.id]);
   });
   res.json(await getState());
@@ -447,7 +464,7 @@ app.put('/api/ports/:dev/:n', wrap(async (req, res) => {
       const td = await deviceOrThrow(c, String(b.link.dev));
       const tp = parseInt(b.link.port, 10);
       checkPort(td, tp);
-      if (td.id === d.id && tp === n) throw new HttpError(400, 'Port nie może być połączony sam ze sobą');
+      if (td.id === d.id && tp === n) throw new HttpError(400, 'Port nie może być połączony sam ze sobą', 'self_link');
       link = { dev: td.id, port: tp };
     }
 
@@ -455,7 +472,7 @@ app.put('/api/ports/:dev/:n', wrap(async (req, res) => {
     if (b.baseRev !== undefined) {
       const cur = old && portOut(old) ? String(old.updated_at) : null;
       if ((b.baseRev || null) !== cur) {
-        throw new HttpError(409, 'Ktoś inny zmienił ten port, kiedy go edytowałeś. Sprawdź aktualne dane i zapisz ponownie.');
+        throw new HttpError(409, 'Ktoś inny zmienił ten port, kiedy go edytowałeś. Sprawdź aktualne dane i zapisz ponownie.', 'port_conflict');
       }
     }
     const same = (a, b2) => a && b2 && a.dev === b2.dev && Number(a.port) === Number(b2.port);
@@ -499,7 +516,7 @@ app.post('/api/ports/bulk', wrap(async (req, res) => {
   const b = req.body || {};
   const ports = Array.isArray(b.ports) ? [...new Set(b.ports.map((x) => parseInt(x, 10)))] : [];
   const status = PORT_STATUS.includes(b.status) ? b.status : null;
-  if (!status && !b.verified) throw new HttpError(400, 'Podaj status albo verified');
+  if (!status && !b.verified) throw new HttpError(400, 'Podaj status albo verified', 'bulk_missing');
   const by = who(req);
   await withTx(async (c) => {
     const d = await deviceOrThrow(c, String(b.dev));
@@ -554,16 +571,17 @@ app.get('/api/export.csv', wrap(async (req, res) => {
     if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; // Excel nie potraktuje tekstu jak formuły
     return /[";\n\r,]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
   };
-  const rows = [['Rack', 'Urządzenie', 'Port', 'Etykieta', 'Status', 'Patchcord do', 'Dokąd prowadzi', 'Urządzenie końcowe', 'VLAN', 'Kolor', 'Długość', 'Etykieta kabla', 'Zweryfikowany', 'Plan', 'Notatki', 'Zmiana']];
+  const L = CSV_TEXT[req.query.lang] || CSV_TEXT.pl;
+  const rows = [L.head];
   for (const [id, d] of Object.entries(devices)) {
     for (let n = 1; n <= d.portCount + d.sfp; n++) {
       const r = d.ports[n] || {};
-      rows.push([rackName(d.rack), d.name, n, label(devices, id, n), STATUS_PL[r.status || 'unknown'], r.link ? linkLabel(id, r.link) : '',
-        r.dest, r.endpoint, r.vlan, r.color, r.length, r.cord, r.verified ? 'tak' : '', r.plan, r.notes, r.updated]);
+      rows.push([rackName(d.rack), d.name, n, label(devices, id, n), L.status[r.status || 'unknown'], r.link ? linkLabel(id, r.link) : '',
+        r.dest, r.endpoint, r.vlan, r.color ? L.colors[r.color] || r.color : '', r.length, r.cord, r.verified ? L.yes : '', r.plan, r.notes, r.updated]);
     }
   }
   res.set('Content-Type', 'text/csv; charset=utf-8');
-  res.set('Content-Disposition', `attachment; filename="rack-inwentaryzacja-${stamp()}.csv"`);
+  res.set('Content-Disposition', `attachment; filename="${L.file}-${stamp()}.csv"`);
   res.send('﻿' + rows.map((r) => r.map(cell).join(';')).join('\r\n'));
 }));
 
@@ -580,7 +598,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 app.post('/api/import', wrap(async (req, res) => {
   const body = req.body || {};
   const data = body.devices || body;
-  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new HttpError(400, 'Niepoprawna kopia JSON');
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new HttpError(400, 'Niepoprawna kopia JSON', 'bad_import');
   const entries = Object.entries(data).filter(([id, d]) => ID_RE.test(id) && d && typeof d === 'object' && id !== 'racks');
   const rackEntries = body.racks && typeof body.racks === 'object' && !Array.isArray(body.racks)
     ? Object.entries(body.racks).filter(([id, r]) => ID_RE.test(id) && r && typeof r === 'object') : [];
@@ -623,11 +641,14 @@ app.post('/api/import', wrap(async (req, res) => {
 }));
 
 /* ---------- błędy ---------- */
-app.use('/api', (req, res) => res.status(404).json({ error: 'Nie ma takiego adresu API' }));
+app.use('/api', (req, res) => res.status(404).json({ error: 'Nie ma takiego adresu API', code: 'api_not_found' }));
 app.use((err, req, res, next) => {
   const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 ? 'Błąd serwera. Szczegóły są w logu aplikacji.' : err.message });
+  if (status >= 500) return res.status(status).json({ error: 'Błąd serwera. Szczegóły są w logu aplikacji.', code: 'server_error' });
+  const code = err.code && !/^[A-Z_]+$/.test(err.code) ? err.code
+    : err.type === 'entity.too.large' ? 'too_large' : err.type === 'entity.parse.failed' ? 'bad_json' : undefined;
+  res.status(status).json({ error: err.message, code, params: err.params });
 });
 
 /* ---------- porządki w tle ---------- */

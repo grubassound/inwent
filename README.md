@@ -35,6 +35,8 @@ przeglądarka ──► Apache :80/:443 ──► Node.js 127.0.0.1:3080 ──�
 
 ## Co potrafi
 
+- **Cztery języki:** polski, angielski, holenderski i czeski. Przełącznik jest w nagłówku i na stronie logowania. Domyślnie aplikacja wybiera język przeglądarki, a wybór zostaje zapamiętany na urządzeniu. Eksport CSV jest w języku interfejsu.
+- **Motyw jasny i ciemny:** przełącznik ☀/☾ w nagłówku. Bez wyboru obowiązuje motyw systemu.
 - **Wiele racków.** Przełączasz je listą nad szafą, a przyciskami ✎ i + edytujesz bieżący albo dodajesz nowy (nazwa, lokalizacja, notatki). Aplikacja pamięta ostatnio oglądany rack. Urządzenie przeniesiesz do innego racka w jego edycji (pole „Rack”). Patchcord może łączyć porty w różnych rackach. Wtedy etykieta drugiego końca ma nazwę racka, np. `Serwerownia › A5`.
 - **Widok szafy** od góry do dołu z paskiem zajętości każdego urządzenia.
 - **Front urządzenia.** Switche mają porty nieparzyste u góry i parzyste u dołu, plus porty SFP. Patchpanele mają moduły po 6 portów.
@@ -366,6 +368,8 @@ curl -X PUT http://127.0.0.1:3080/api/ports/pkn01/12 \
 ---
 
 ## Testy
+
+`test/i18n.test.js` sprawdza kompletność tłumaczeń: każdy klucz użyty w kodzie musi istnieć we wszystkich językach. Nie wymaga bazy. Teksty interfejsu są w `public/i18n.js`. Nowy napis dodajesz tam we wszystkich czterech językach.
 
 Testy API (`test/api.test.js`) działają na prawdziwej bazie MySQL/MariaDB. **Czyszczą wszystkie tabele**, więc użyj osobnej bazy, której nazwa zawiera „test”:
 

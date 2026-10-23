@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0a0c0f">
-<title>Inwentaryzacja racka</title>
+<title>Rack Inventory</title>
+<script src="i18n.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
@@ -12,42 +12,50 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top glass">
+<header class="top card">
   <div class="brand">
-    <h1>Inwentaryzacja racka</h1>
-    <p id="modeLine">Łączenie z serwerem…</p>
+    <img src="favicon.svg" alt="">
+    <div>
+      <h1 data-i18n="app.title">Inwentaryzacja racka</h1>
+      <p id="modeLine"></p>
+    </div>
   </div>
-  <div class="stats" id="stats"></div>
+  <div class="prefs">
+    <select id="langSel" class="compact" data-i18n-aria="lang.label" data-i18n-title="lang.label"></select>
+    <button class="btn icon" id="themeBtn" type="button"></button>
+  </div>
   <div class="tools">
-    <div class="search"><input id="q" type="text" placeholder="Szukaj: pokój, gniazdo, VLAN, B12…" autocomplete="off"></div>
-    <a class="btn" href="api/export.csv">CSV</a>
-    <a class="btn" href="api/export.json">Kopia JSON</a>
-    <label class="btn" for="importFile">Import</label>
+    <div class="search"><input id="q" type="text" data-i18n-ph="search.ph" data-i18n-aria="search.label" autocomplete="off"></div>
+    <a class="btn" id="csvLink" href="api/export.csv">CSV</a>
+    <a class="btn" href="api/export.json" data-i18n="btn.json">Kopia JSON</a>
+    <label class="btn" for="importFile" data-i18n="btn.import">Import</label>
     <input id="importFile" type="file" accept="application/json,.json" hidden>
-    <form id="logoutForm" method="post" action="logout" hidden><button class="btn" type="submit" title="Wyloguj"><span id="who"></span> · Wyloguj</button></form>
+    <span class="spacer"></span>
+    <form id="logoutForm" method="post" action="logout" hidden><button class="btn" type="submit"><span id="who"></span> · <span data-i18n="btn.logout">Wyloguj</span></button></form>
   </div>
 </header>
+<div class="stats card" id="stats"></div>
 <div id="banner"></div>
-<section id="results" class="results glass" hidden></section>
+<section id="results" class="results card" hidden></section>
 
 <main class="app">
-  <nav class="rack glass" aria-label="Urządzenia w racku">
+  <nav class="rack card" data-i18n-aria="rack.aria">
     <div class="rack-switch">
-      <label class="eyebrow" for="rackSel">Rack</label>
+      <label class="eyebrow" for="rackSel" data-i18n="rack.label">Rack</label>
       <div class="rack-switch-row">
-        <select id="rackSel" aria-label="Wybierz rack"></select>
-        <button class="btn small icon" data-act="rackEdit" title="Edytuj rack" aria-label="Edytuj rack">✎</button>
-        <button class="btn small icon" data-act="rackNew" title="Dodaj rack" aria-label="Dodaj rack">+</button>
+        <select id="rackSel" data-i18n-aria="rack.select"></select>
+        <button class="btn small icon" data-act="rackEdit" data-i18n-title="rack.edit" data-i18n-aria="rack.edit">✎</button>
+        <button class="btn small icon" data-act="rackNew" data-i18n-title="rack.add" data-i18n-aria="rack.add">+</button>
       </div>
       <div id="rackForm"></div>
     </div>
-    <div class="rack-head"><span class="eyebrow" id="rackHead">Szafa · od góry</span><button class="btn small" id="btnAddDev">+ Urządzenie</button></div>
+    <div class="rack-head"><span class="eyebrow" id="rackHead"></span><button class="btn small" id="btnAddDev" data-i18n="btn.addDevice">+ Urządzenie</button></div>
     <ul class="rack-list" id="rackList"></ul>
   </nav>
-  <section class="device glass" id="device"></section>
-  <aside class="editor glass" id="editor"></aside>
+  <section class="device card" id="device"></section>
+  <aside class="editor card" id="editor"></aside>
 </main>
-<div id="toast" class="toast glass" hidden></div>
+<div id="toast" class="toast" role="status" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>

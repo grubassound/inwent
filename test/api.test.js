@@ -285,6 +285,24 @@ it('import: kopia z rackami i stara kopia bez racków', async () => {
   assert.match(csv.split('\r\n')[0], /^\uFEFF?Rack;Urządzenie;Port/);
 });
 
+it('błędy mają kod do tłumaczenia, eksport CSV w wybranym języku', async () => {
+  const r = await api('PUT', '/api/ports/nie-ma/1', { status: 'used' });
+  assert.equal(r.status, 404);
+  assert.equal(r.data.code, 'dev_not_found');
+  assert.deepEqual(r.data.params, { id: 'nie-ma' });
+  assert.equal((await api('GET', '/api/nie-ma')).data.code, 'api_not_found');
+
+  const a = await addDevice({ name: 'A', short: 'A' });
+  await api('PUT', `/api/ports/${a}/1`, { status: 'used', color: 'czerwony', verified: true });
+  const { data: nl } = await api('GET', '/api/export.csv?lang=nl');
+  assert.match(nl, /Rack;Apparaat;Poort/);
+  assert.match(nl, /;In gebruik;/);
+  assert.match(nl, /;rood;/);
+  assert.match(nl, /;ja;/);
+  const { data: pl } = await api('GET', '/api/export.csv');
+  assert.match(pl, /;Zajęty;.*;czerwony;/);
+});
+
 it('logowanie przez stronę: przekierowania, sesja w ciasteczku, wylogowanie', async () => {
   const p = BASE_PORT + 2;
   const authed = startServer(p, { AUTH_USER: 'admin', AUTH_PASSWORD: 'tajne#1', SESSION_SECRET: 'x'.repeat(32) });
