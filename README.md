@@ -4,6 +4,15 @@ Aplikacja webowa do inwentaryzacji szafy sieciowej. Opisujesz w niej każdy port
 
 Stack: **Node.js 18+ · Express · MySQL 8 / MariaDB 10.5+**. Frontend to czysty HTML/CSS/JS bez kompilacji.
 
+Jak to działa na serwerze: aplikacja to mały serwer Node.js, który działa w tle jako usługa systemd i nasłuchuje tylko lokalnie (`127.0.0.1:3080`). Z sieci łączysz się przez **Apache** (albo nginx). Apache odbiera ruch na portach 80/443, obsługuje HTTPS i przekazuje zapytania do Node.js. Ten sam Apache może jednocześnie obsługiwać inne strony, np. w PHP.
+
+```
+przeglądarka ──► Apache :80/:443 ──► Node.js 127.0.0.1:3080 ──► MySQL/MariaDB
+                    └──► inne strony (PHP, statyczne…)
+```
+
+> Nie masz jeszcze serwera WWW? Instrukcja instalacji Apache, PHP, MariaDB, HTTPS i dodatków od zera na Ubuntu/Debian jest w **[docs/serwer-www-linux.md](docs/serwer-www-linux.md)**.
+
 ---
 
 ## Spis treści
@@ -12,14 +21,15 @@ Stack: **Node.js 18+ · Express · MySQL 8 / MariaDB 10.5+**. Frontend to czysty
 2. [Wymagania](#wymagania)
 3. [Szybka instalacja (install.sh)](#szybka-instalacja)
 4. [Instalacja ręczna krok po kroku](#instalacja-ręczna)
-5. [nginx i HTTPS](#nginx-i-https)
+5. [Apache, nginx i HTTPS](#apache-nginx-i-https)
 6. [Logowanie](#logowanie)
 7. [Przeniesienie danych z wersji w Claude](#przeniesienie-danych-z-wersji-w-claude)
 8. [Kopie zapasowe](#kopie-zapasowe)
 9. [Aktualizacja](#aktualizacja)
 10. [Jak pracować przy szafie](#jak-pracować-przy-szafie)
 11. [Struktura bazy i API](#struktura-bazy-i-api)
-12. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
+12. [Testy](#testy)
+13. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
 
 ---
 
@@ -28,10 +38,12 @@ Stack: **Node.js 18+ · Express · MySQL 8 / MariaDB 10.5+**. Frontend to czysty
 - **Widok szafy** od góry do dołu z paskiem zajętości każdego urządzenia.
 - **Front urządzenia.** Switche mają porty nieparzyste u góry i parzyste u dołu, plus porty SFP. Patchpanele mają moduły po 6 portów.
 - **Statusy portów:** do ustalenia, zajęty, wolny, rezerwacja, uszkodzony. Dodatkowo znacznik „zweryfikowany fizycznie”.
-- **Patchcordy zapisują się po obu stronach w jednej transakcji.** Przepięcie automatycznie zwalnia stary koniec.
+- **Patchcordy zapisują się po obu stronach w jednej transakcji.** Przepięcie automatycznie zwalnia stary koniec: port „Zajęty” wraca wtedy do „Do ustalenia”. Kolor, długość i etykieta kabla są wspólne dla obu końców.
 - **Trasa kabla:** `PKN01:12 ⇄ B7 → Biuro 1.12, gniazdo 3 (Drukarka)`.
 - **„Zapisz i dalej”** oraz strzałki ← → do szybkiego przechodzenia port po porcie.
-- **Zaznaczanie wielu portów** i hurtowa zmiana statusu.
+- **Zaznaczanie wielu portów** i hurtowa zmiana statusu. Hurtowe „Wolny” odpina patchcordy z zaznaczonych portów.
+- **Ochrona przed nadpisaniem:** gdy dwie osoby edytują ten sam port, druga dostaje ostrzeżenie z aktualnym stanem z bazy i sama decyduje, czy nadpisać. Przy przejściu do innego portu aplikacja pyta o niezapisane zmiany.
+- **Zmniejszenie liczby portów urządzenia** usuwa opis portów spoza nowego zakresu i odpina prowadzące do nich patchcordy. Aplikacja najpierw pyta o zgodę.
 - **Wyszukiwarka** po pokoju, gnieździe, VLAN-ie, etykiecie i notatkach.
 - **Historia zmian** każdego portu: kto i kiedy zmienił.
 - **Eksport CSV** (otwiera się w Excelu) i **kopia JSON**, plus import JSON.
@@ -49,7 +61,10 @@ Stack: **Node.js 18+ · Express · MySQL 8 / MariaDB 10.5+**. Frontend to czysty
   sudo apt install -y nodejs
   ```
 - **MySQL 8** albo **MariaDB 10.5+**, już działający.
+- **Apache 2.4** (albo nginx) jako serwer WWW przed aplikacją. Bez niego aplikacja też działa, ale tylko pod adresem `http://IP:3080` i bez HTTPS.
 - `git`.
+
+Brakuje czegoś z tej listy? Wszystko po kolei: [docs/serwer-www-linux.md](docs/serwer-www-linux.md).
 
 ---
 
@@ -73,7 +88,7 @@ Instalator po kolei:
 5. Tworzy tabele i (jeśli chcesz) wczytuje układ racka: 16 urządzeń z inwentaryzacji.
 6. Instaluje i uruchamia usługę systemd `rack-inventory`.
 
-Po instalacji wejdź na `http://IP-SERWERA:3080`, jeśli wybrałeś `0.0.0.0`, albo skonfiguruj nginx (niżej).
+Na pytanie o adres nasłuchu zostaw `127.0.0.1`, jeśli aplikacja ma działać za Apache. Potem skonfiguruj Apache według sekcji [Apache, nginx i HTTPS](#apache-nginx-i-https). Adres `0.0.0.0` wybierz tylko wtedy, gdy nie używasz serwera WWW i chcesz wchodzić bezpośrednio na `http://IP-SERWERA:3080`.
 
 ---
 
@@ -113,13 +128,14 @@ nano .env
 
 | Zmienna | Opis | Domyślnie |
 |---|---|---|
-| `HOST` | Adres nasłuchu. `127.0.0.1` za nginx, `0.0.0.0` dla całej sieci LAN | `127.0.0.1` |
+| `HOST` | Adres nasłuchu. `127.0.0.1` za Apache/nginx, `0.0.0.0` dla całej sieci LAN bez serwera WWW | `127.0.0.1` |
 | `PORT` | Port aplikacji | `3080` |
 | `DB_HOST` / `DB_PORT` | Serwer MySQL | `localhost` / `3306` |
 | `DB_NAME` | Nazwa bazy | `rack_inventory` |
 | `DB_USER` / `DB_PASSWORD` | Użytkownik bazy | `rack` / – |
 | `DB_SOCKET` | Opcjonalnie gniazdo unix, np. `/run/mysqld/mysqld.sock` | – |
-| `AUTH_USER` / `AUTH_PASSWORD` | Logowanie do aplikacji. Puste = wyłączone | – |
+| `AUTH_USER` / `AUTH_PASSWORD` | Logowanie do aplikacji. Puste = wyłączone. Hasło ze znakami `#`, `$`, `` ` `` lub spacją wpisz w apostrofach | – |
+| `HISTORY_DAYS` | Ile dni trzymać historię zmian portów. `0` = bez limitu | `0` |
 
 ### 4. Tabele i układ racka
 
@@ -153,7 +169,56 @@ Logi: `sudo journalctl -u rack-inventory -f`
 
 ---
 
-## nginx i HTTPS
+## Apache, nginx i HTTPS
+
+Najpierw upewnij się, że aplikacja działa lokalnie: `curl http://127.0.0.1:3080/api/health` powinno zwrócić `{"ok":true}`. W `.env` ustaw `HOST=127.0.0.1`, żeby port 3080 nie był dostępny z sieci z pominięciem Apache.
+
+### Apache
+
+Gotowa konfiguracja z komentarzami jest w [`deploy/apache.conf`](deploy/apache.conf). Na początek włącz moduły proxy (jednorazowo):
+
+```bash
+sudo a2enmod proxy proxy_http headers
+sudo systemctl restart apache2
+```
+
+Potem wybierz jeden z dwóch wariantów.
+
+**Wariant A: osobny adres**, np. `http://rack.firma.lan` albo `https://rack.twojadomena.pl`. Wymaga wpisu DNS (albo wpisu w `hosts` na komputerach w LAN) wskazującego na serwer.
+
+```bash
+sudo cp deploy/apache.conf /etc/apache2/sites-available/rack-inventory.conf
+sudo nano /etc/apache2/sites-available/rack-inventory.conf   # ustaw ServerName
+sudo a2ensite rack-inventory
+sudo apache2ctl configtest            # ma wypisać: Syntax OK
+sudo systemctl reload apache2
+```
+
+**Wariant B: podkatalog strony, która już działa**, np. `http://serwer/rack/`. Bez DNS, a reszta strony (np. PHP) działa jak dotąd. Dopisz do istniejącego `<VirtualHost>` (zwykle `/etc/apache2/sites-available/000-default.conf`, a przy HTTPS także `default-ssl.conf`) przed `</VirtualHost>`:
+
+```apache
+RedirectMatch 301 ^/rack$ /rack/
+<Location /rack/>
+    ProxyPass        http://127.0.0.1:3080/ timeout=60
+    ProxyPassReverse http://127.0.0.1:3080/
+    LimitRequestBody 10485760
+</Location>
+```
+
+Potem `sudo apache2ctl configtest && sudo systemctl reload apache2`. Ukośnik na końcu `/rack/` jest ważny: frontend używa ścieżek względnych, dlatego `/rack` jest przekierowywane na `/rack/`.
+
+**HTTPS:**
+
+- Z publiczną domeną (Let's Encrypt, certyfikat odnawia się sam):
+  ```bash
+  sudo apt install -y certbot python3-certbot-apache
+  sudo certbot --apache -d rack.twojadomena.pl
+  ```
+- Tylko w LAN, bez domeny: certyfikat self-signed. Instrukcja jest w komentarzach w `deploy/apache.conf`. Przeglądarka raz zapyta o wyjątek bezpieczeństwa.
+
+Logi Apache dla aplikacji: `/var/log/apache2/rack-inventory-error.log` i `rack-inventory-access.log` (wariant A) albo logi strony głównej (wariant B).
+
+### nginx
 
 ```bash
 sudo cp deploy/nginx.conf /etc/nginx/sites-available/rack-inventory
@@ -162,23 +227,9 @@ sudo ln -s /etc/nginx/sites-available/rack-inventory /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-HTTPS przez Let's Encrypt (gdy serwer ma publiczną domenę):
+HTTPS: `sudo apt install -y certbot python3-certbot-nginx && sudo certbot --nginx -d rack.twojadomena.pl`. Wariant z podkatalogiem jest w `deploy/nginx.conf`.
 
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d rack.twojadomena.pl
-```
-
-Aplikację można też wystawić pod podkatalogiem, np. `https://serwer/rack/`. Przykład jest w `deploy/nginx.conf`.
-
-Apache zamiast nginx:
-
-```apache
-ProxyPass        / http://127.0.0.1:3080/
-ProxyPassReverse / http://127.0.0.1:3080/
-```
-
-Wymaga włączenia modułów: `sudo a2enmod proxy proxy_http`.
+> Apache i nginx nie mogą jednocześnie nasłuchiwać na porcie 80. Na jednym serwerze używaj jednego z nich.
 
 ---
 
@@ -191,7 +242,7 @@ AUTH_USER=admin
 AUTH_PASSWORD=mocne-haslo
 ```
 
-Potem zrestartuj usługę: `sudo systemctl restart rack-inventory`. Przeglądarka zapyta o login i hasło (HTTP Basic). Jeśli aplikacja jest dostępna spoza LAN, używaj jej **tylko przez HTTPS**.
+Potem zrestartuj usługę: `sudo systemctl restart rack-inventory`. Przeglądarka zapyta o login i hasło (HTTP Basic). Po 10 nieudanych próbach z jednego adresu logowanie jest blokowane na 15 minut. Jeśli aplikacja jest dostępna spoza LAN, używaj jej **tylko przez HTTPS**.
 
 ---
 
@@ -214,7 +265,7 @@ Ręcznie:
 cd /opt/rack-inventory && bash backup.sh
 ```
 
-Skrypt robi `mysqldump` do `backups/rack_DATA.sql.gz` i trzyma 30 ostatnich plików.
+Skrypt robi `mysqldump` do `backups/rack_DATA.sql.gz` i trzyma 30 ostatnich plików. Pliki kopii czyta tylko właściciel (uprawnienia 600), bo zawierają całą bazę.
 
 Automatycznie, codziennie o 2:15 (`crontab -e`):
 
@@ -278,7 +329,7 @@ API (JSON):
 | PUT | `/api/devices/:id` | Edytuje urządzenie |
 | DELETE | `/api/devices/:id` | Usuwa urządzenie, rozłącza patchcordy do niego |
 | POST | `/api/devices/reorder` | `{ids:[…]}` – nowa kolejność w szafie |
-| PUT | `/api/ports/:dev/:n` | Zapis portu (z połączeniem po obu stronach) |
+| PUT | `/api/ports/:dev/:n` | Zapis portu (z połączeniem po obu stronach). Opcjonalne `baseRev` (pole `rev` z `/api/state`): jeśli port zmienił się w międzyczasie, odpowiedź to 409 |
 | POST | `/api/ports/bulk` | `{dev, ports:[…], status}` lub `{…, verified:true}` |
 | GET | `/api/ports/:dev/:n/history` | 30 ostatnich zmian portu |
 | GET | `/api/export.csv` | Eksport do Excela (średnik, UTF-8 z BOM) |
@@ -295,6 +346,19 @@ curl -X PUT http://127.0.0.1:3080/api/ports/pkn01/12 \
 
 ---
 
+## Testy
+
+Testy API (`test/api.test.js`) działają na prawdziwej bazie MySQL/MariaDB. **Czyszczą wszystkie tabele**, więc użyj osobnej bazy, której nazwa zawiera „test”:
+
+```bash
+sudo mysql -e "CREATE DATABASE rack_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON rack_test.* TO 'rack'@'localhost';"
+TEST_DB_NAME=rack_test TEST_DB_USER=rack TEST_DB_PASSWORD='hasło' npm test
+```
+
+Bez `TEST_DB_NAME` testy są pomijane. Opcjonalnie: `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_PORT` (port serwera testowego, domyślnie 39080).
+
+---
+
 ## Rozwiązywanie problemów
 
 | Objaw | Co sprawdzić |
@@ -302,6 +366,10 @@ curl -X PUT http://127.0.0.1:3080/api/ports/pkn01/12 \
 | `Access denied for user 'rack'@'localhost'` | Hasło w `.env`. Czy użytkownik ma host `localhost`, a `DB_HOST=localhost`? Dla `127.0.0.1` MySQL może traktować to jako inny host. |
 | `ECONNREFUSED 127.0.0.1:3306` | MySQL nie działa albo nasłuchuje tylko na gnieździe. Ustaw `DB_SOCKET=/run/mysqld/mysqld.sock`. |
 | `Unknown collation utf8mb4_0900_ai_ci` | Starszy MariaDB. Schemat używa `utf8mb4_unicode_ci`, więc to dotyczy tylko ręcznie utworzonej bazy. Utwórz ją z `utf8mb4_unicode_ci`. |
-| Strona nie otwiera się z innego komputera | `HOST=127.0.0.1` w `.env` (tylko lokalnie). Ustaw `0.0.0.0` albo nginx. Sprawdź `sudo ufw allow 3080/tcp`. |
+| Strona nie otwiera się z innego komputera | Za Apache: czy firewall przepuszcza HTTP/HTTPS (`sudo ufw allow 'Apache Full'`)? Bez Apache: `HOST=127.0.0.1` w `.env` oznacza tylko lokalnie. Ustaw `0.0.0.0` i `sudo ufw allow 3080/tcp`. |
 | Usługa nie startuje | `sudo journalctl -u rack-inventory -n 50`. Najczęściej zła ścieżka do `node` albo brak praw do katalogu. |
-| 413 przy imporcie przez nginx | Dodaj `client_max_body_size 10m;` (jest w `deploy/nginx.conf`). |
+| Apache: **503 Service Unavailable** | Node.js nie działa: `sudo systemctl status rack-inventory`. Sprawdź też, czy port w `ProxyPass` zgadza się z `PORT` w `.env`. |
+| Apache: `Invalid command 'ProxyPass'` albo `'RequestHeader'` przy `configtest` | Nie włączono modułów: `sudo a2enmod proxy proxy_http headers`. |
+| Apache: strona startowa Apache („It works!”) zamiast aplikacji | Wariant A: wpisany adres nie zgadza się z `ServerName`/`ServerAlias`, więc Apache użył domyślnej strony. Wariant B: brakuje ukośnika, wejdź na `/rack/`. |
+| Pod `/rack/` strona bez stylów, błędy 404 w konsoli | Adres bez końcowego ukośnika. Dodaj `RedirectMatch 301 ^/rack$ /rack/`. |
+| 413 przy imporcie | Apache: `LimitRequestBody 10485760`. nginx: `client_max_body_size 10m;`. Obie wartości są w plikach w `deploy/`. |
