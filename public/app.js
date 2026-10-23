@@ -39,8 +39,19 @@ async function api(method, url, body){
   });
   let data = null;
   try { data = await res.json(); } catch(e) {}
+  if (res.status === 401 && data && data.login) sessionExpired();
   if (!res.ok){ const err = new Error((data && data.error) || ('HTTP '+res.status)); err.status = res.status; throw err; }
+  if (expired){ expired = false; renderHeader(); }
   return data;
+}
+// Sesja wygasła: bez niezapisanych zmian od razu na stronę logowania,
+// a z niezapisanymi zmianami portu tylko komunikat, żeby ich nie stracić.
+let expired = false;
+function sessionExpired(){
+  if (expired) return;
+  expired = true;
+  if (!draftDirty()) { location.href = 'login.html?sesja=1'; return; }
+  renderHeader();
 }
 function applyState(s){
   if (!s || !s.devices) return;
@@ -67,7 +78,7 @@ async function refresh(full){
   try {
     applyState(await api('GET','api/state'));
   } catch(e) {
-    online = false;
+    if (e.status !== 401) online = false;
   }
   if (full) render(); else { renderHeader(); renderRack(); renderDevice(); renderResults(); }
 }
@@ -113,7 +124,9 @@ function renderHeader(){
     `<span class="stat">Porty <b>${all.total}</b></span>` +
     ['used','free','unknown','reserved','broken'].filter(k=>(k!=='reserved'&&k!=='broken')||all[k]).map(k=>`<span class="stat"><i class="dot" style="background:var(${STATUS[k].v})"></i>${STATUS[k].l} <b>${all[k]}</b></span>`).join('') +
     `<span class="stat">Zweryfikowane <b>${pct}%</b><span class="progress"><i style="width:${pct}%"></i></span></span>`;
-  if (!pendingImport) $('banner').innerHTML = (loaded && !online) ? '<div class="banner glass">Serwer nie odpowiada. Zmiany nie zostaną zapisane, dopóki połączenie nie wróci.</div>' : '';
+  if (!pendingImport) $('banner').innerHTML = expired
+    ? '<div class="banner glass">Sesja wygasła. <a href="login.html" target="_blank" rel="noopener">Zaloguj się w nowej karcie</a>, potem wróć tutaj i zapisz port.</div>'
+    : (loaded && !online) ? '<div class="banner glass">Serwer nie odpowiada. Zmiany nie zostaną zapisane, dopóki połączenie nie wróci.</div>' : '';
 }
 function renderRack(){
   const ids = sortedIds();
@@ -482,4 +495,7 @@ window.addEventListener('beforeunload', e => { if (draftDirty()) { e.preventDefa
 
 render();
 refresh(true);
+api('GET','api/session').then(s => {
+  if (s && s.auth && s.user){ $('who').textContent = s.user; $('logoutForm').hidden = false; }
+}).catch(() => {});
 })();

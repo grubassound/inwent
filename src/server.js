@@ -24,35 +24,106 @@ app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '10mb' }));
 
-/* ---------- opcjonalne logowanie (HTTP Basic) ---------- */
+/* ---------- opcjonalne logowanie: strona logowania + sesja w podpisanym ciasteczku ---------- */
+const AUTH_ON = Boolean(AUTH_USER && AUTH_PASSWORD);
 const AUTH_MAX_FAILS = 10;
 const AUTH_WINDOW_MS = 15 * 60 * 1000;
+const SESSION_COOKIE = 'rack_session';
+const SESSION_MS = 12 * 60 * 60 * 1000;        // bez „Zapamiętaj mnie”
+const REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;  // z „Zapamiętaj mnie”
+const PUBLIC_FILES = new Set(['/login.html', '/style.css', '/favicon.ico']);
 const authFails = new Map(); // ip -> { n, reset }
+
+let SESSION_SECRET = process.env.SESSION_SECRET || '';
+if (AUTH_ON && !SESSION_SECRET) {
+  SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('Brak SESSION_SECRET w .env: po każdym restarcie aplikacji trzeba będzie zalogować się ponownie.');
+}
+// Klucz zależy też od loginu i hasła, więc ich zmiana unieważnia wszystkie sesje.
+const sessionKey = crypto.createHash('sha256').update(`${SESSION_SECRET}\0${AUTH_USER}\0${AUTH_PASSWORD}`).digest();
+const sign = (data) => crypto.createHmac('sha256', sessionKey).update(data).digest('base64url');
 
 function safeEqual(a, b) {
   const ba = Buffer.from(String(a)), bb = Buffer.from(String(b));
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
 }
-if (AUTH_USER && AUTH_PASSWORD) {
-  app.use((req, res, next) => {
-    const now = Date.now();
-    const f = authFails.get(req.ip);
-    if (f && f.n >= AUTH_MAX_FAILS && now < f.reset) {
-      res.set('Retry-After', String(Math.ceil((f.reset - now) / 1000)));
-      return res.status(429).send('Za dużo nieudanych prób logowania. Spróbuj ponownie za kilka minut.');
+function credentialsOk(u, p) {
+  const okUser = safeEqual(u ?? '', AUTH_USER), okPass = safeEqual(p ?? '', AUTH_PASSWORD);
+  return okUser && okPass;
+}
+function authBlocked(ip) {
+  const f = authFails.get(ip);
+  return Boolean(f && f.n >= AUTH_MAX_FAILS && Date.now() < f.reset);
+}
+function authFailed(ip) {
+  const now = Date.now(), f = authFails.get(ip);
+  if (!f || now >= f.reset) authFails.set(ip, { n: 1, reset: now + AUTH_WINDOW_MS });
+  else f.n++;
+}
+function readSession(req) {
+  const m = new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`).exec(req.headers.cookie || '');
+  if (!m) return null;
+  const [data, sig] = m[1].split('.');
+  if (!data || !sig || !safeEqual(sig, sign(data))) return null;
+  try {
+    const s = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+    return s.exp > Date.now() ? s : null;
+  } catch (e) {
+    return null;
+  }
+}
+// Ciasteczko celowo bez atrybutu Path: przeglądarka przypisuje je do katalogu adresu /login,
+// czyli do katalogu aplikacji, także gdy działa ona pod podkatalogiem (np. /rack/ za Apache).
+function setSessionCookie(req, res, value, maxAgeMs) {
+  const parts = [`${SESSION_COOKIE}=${value}`, 'HttpOnly', 'SameSite=Lax'];
+  if (req.secure) parts.push('Secure');
+  if (maxAgeMs !== undefined) parts.push(`Max-Age=${Math.floor(maxAgeMs / 1000)}`);
+  res.append('Set-Cookie', parts.join('; '));
+}
+
+if (AUTH_ON) {
+  app.post('/login', express.urlencoded({ extended: false, limit: '10kb' }), (req, res) => {
+    if (authBlocked(req.ip)) return res.redirect(303, 'login.html?blad=limit');
+    const b = req.body || {};
+    if (!credentialsOk(b.user, b.password)) {
+      authFailed(req.ip);
+      return res.redirect(303, 'login.html?blad=1');
     }
+    authFails.delete(req.ip);
+    const remember = b.remember === '1';
+    const ttl = remember ? REMEMBER_MS : SESSION_MS;
+    const data = Buffer.from(JSON.stringify({ u: AUTH_USER, exp: Date.now() + ttl })).toString('base64url');
+    setSessionCookie(req, res, `${data}.${sign(data)}`, remember ? ttl : undefined);
+    res.redirect(303, './');
+  });
+  app.post('/logout', (req, res) => {
+    setSessionCookie(req, res, '', 0);
+    res.redirect(303, 'login.html?wylogowano=1');
+  });
+
+  app.use((req, res, next) => {
+    const s = readSession(req);
+    if (s) {
+      if (req.path === '/login.html') return res.redirect(302, './');
+      req.user = s.u;
+      return next();
+    }
+    // Skrypty (np. curl) mogą logować się nagłówkiem HTTP Basic.
     const h = req.headers.authorization || '';
     if (h.startsWith('Basic ')) {
+      if (authBlocked(req.ip)) return res.status(429).json({ error: 'Za dużo nieudanych prób logowania. Spróbuj ponownie za kilka minut.' });
       const [u, ...rest] = Buffer.from(h.slice(6), 'base64').toString('utf8').split(':');
-      if (safeEqual(u, AUTH_USER) && safeEqual(rest.join(':'), AUTH_PASSWORD)) {
+      if (credentialsOk(u, rest.join(':'))) {
         authFails.delete(req.ip);
         req.user = u;
         return next();
       }
-      if (!f || now >= f.reset) authFails.set(req.ip, { n: 1, reset: now + AUTH_WINDOW_MS });
-      else f.n++;
+      authFailed(req.ip);
     }
-    res.set('WWW-Authenticate', 'Basic realm="Rack Inventory", charset="UTF-8"').status(401).send('Wymagane logowanie');
+    if (PUBLIC_FILES.has(req.path)) return next();
+    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Nie jesteś zalogowany albo sesja wygasła', login: true });
+    if (req.method === 'GET' && ['/', '/index.html', '/login'].includes(req.path)) return res.redirect(302, 'login.html');
+    res.status(401).send('Wymagane logowanie');
   });
 }
 
@@ -211,6 +282,8 @@ app.get('/api/health', wrap(async (req, res) => {
 }));
 
 app.get('/api/state', wrap(async (req, res) => res.json(await getState())));
+
+app.get('/api/session', (req, res) => res.json({ auth: AUTH_ON, user: req.user || null }));
 
 app.post('/api/seed', wrap(async (req, res) => {
   await withTx(async (c) => {

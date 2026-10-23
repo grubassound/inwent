@@ -111,6 +111,7 @@ DB_USER='$DB_USER'
 DB_PASSWORD='$DB_PASSWORD'
 AUTH_USER='$AUTH_USER'
 AUTH_PASSWORD='$AUTH_PASSWORD'
+SESSION_SECRET='$(tr -dc 'a-f0-9' </dev/urandom | head -c 64)'
 ENV
   umask 022
   c_ok "Zapisano .env (uprawnienia 600)"

@@ -238,11 +238,21 @@ HTTPS: `sudo apt install -y certbot python3-certbot-nginx && sudo certbot --ngin
 Ustaw w `.env`:
 
 ```
-AUTH_USER=admin
-AUTH_PASSWORD=mocne-haslo
+AUTH_USER='admin'
+AUTH_PASSWORD='mocne-haslo'
+SESSION_SECRET='wynik: openssl rand -hex 32'
 ```
 
-Potem zrestartuj usługę: `sudo systemctl restart rack-inventory`. Przeglądarka zapyta o login i hasło (HTTP Basic). Po 10 nieudanych próbach z jednego adresu logowanie jest blokowane na 15 minut. Jeśli aplikacja jest dostępna spoza LAN, używaj jej **tylko przez HTTPS**.
+Potem zrestartuj usługę: `sudo systemctl restart rack-inventory`.
+
+- Aplikacja pokazuje **stronę logowania**. Po zalogowaniu w nagłówku jest przycisk **Wyloguj**.
+- Sesja trwa 12 godzin. Z zaznaczonym „Zapamiętaj mnie” trwa 30 dni na danym urządzeniu.
+- Po 10 nieudanych próbach z jednego adresu logowanie jest blokowane na 15 minut.
+- Zmiana hasła (albo `SESSION_SECRET`) wylogowuje wszystkich. Bez `SESSION_SECRET` trzeba logować się ponownie po każdym restarcie aplikacji.
+- Jeśli sesja wygaśnie w trakcie edycji portu, aplikacja nie przeniesie Cię na stronę logowania. Pokaże komunikat z linkiem do zalogowania w nowej karcie, żeby wpisane dane nie przepadły.
+- Skrypty mogą dalej korzystać z API przez HTTP Basic: `curl -u admin:hasło https://serwer/rack/api/state`.
+
+Jeśli aplikacja jest dostępna poza localhost, używaj jej **tylko przez HTTPS**. W przeciwnym razie hasło i ciasteczko sesji idą przez sieć otwartym tekstem.
 
 ---
 

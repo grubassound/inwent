@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0c0f">
+<title>Logowanie · Inwentaryzacja racka</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="login glass">
+  <div class="eyebrow">Szafa sieciowa</div>
+  <h1>Inwentaryzacja racka</h1>
+  <p class="login-sub">Zaloguj się, żeby zobaczyć i edytować porty.</p>
+  <div id="msg" class="login-msg" role="alert" hidden></div>
+  <form class="form" method="post" action="login">
+    <div class="field"><label for="user">Login</label>
+      <input id="user" name="user" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus></div>
+    <div class="field"><label for="password">Hasło</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required></div>
+    <label class="check"><input name="remember" type="checkbox" value="1"> Zapamiętaj mnie na tym urządzeniu (30 dni)</label>
+    <button class="btn primary login-btn" type="submit">Zaloguj się</button>
+  </form>
+</main>
+<script>
+(() => {
+  const q = new URLSearchParams(location.search);
+  const msg = document.getElementById('msg');
+  const show = (text, ok) => { msg.textContent = text; msg.hidden = false; msg.classList.toggle('ok', !!ok); };
+  if (q.get('blad') === 'limit') show('Za dużo nieudanych prób. Logowanie z tego urządzenia jest zablokowane na 15 minut.');
+  else if (q.get('blad')) show('Nieprawidłowy login lub hasło.');
+  else if (q.get('sesja')) show('Sesja wygasła. Zaloguj się ponownie.');
+  else if (q.get('wylogowano')) show('Wylogowano.', true);
+  if (q.has('blad')) document.getElementById('password').focus();
+  if (location.search) history.replaceState(null, '', location.pathname);
+})();
+</script>
+</body>
+</html>

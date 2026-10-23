@@ -221,6 +221,57 @@ it('błąd serwera nie ujawnia szczegółów bazy', async () => {
   }
 });
 
+it('logowanie przez stronę: przekierowania, sesja w ciasteczku, wylogowanie', async () => {
+  const p = BASE_PORT + 2;
+  const authed = startServer(p, { AUTH_USER: 'admin', AUTH_PASSWORD: 'tajne#1', SESSION_SECRET: 'x'.repeat(32) });
+  const url = `http://127.0.0.1:${p}`;
+  const get = (path, cookie) => fetch(url + path, { redirect: 'manual', headers: cookie ? { Cookie: cookie } : {} });
+  const login = (user, password, extra = '') => fetch(url + '/login', {
+    method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `user=${encodeURIComponent(user)}&password=${encodeURIComponent(password)}${extra}`,
+  });
+  try {
+    await waitUp(url, { Authorization: 'Basic ' + Buffer.from('admin:tajne#1').toString('base64') });
+
+    const root = await get('/');
+    assert.equal(root.status, 302);
+    assert.equal(root.headers.get('location'), 'login.html', 'względne przekierowanie działa też pod /rack/');
+    assert.equal(root.headers.get('www-authenticate'), null, 'bez okna logowania przeglądarki');
+    assert.equal((await get('/login.html')).status, 200);
+    assert.equal((await get('/style.css')).status, 200);
+    assert.equal((await get('/app.js')).status, 401);
+    const api401 = await get('/api/state');
+    assert.equal(api401.status, 401);
+    assert.equal((await api401.json()).login, true);
+
+    const bad = await login('admin', 'zle');
+    assert.equal(bad.headers.get('location'), 'login.html?blad=1');
+    assert.equal(bad.headers.get('set-cookie'), null);
+
+    const ok = await login('admin', 'tajne#1');
+    assert.equal(ok.status, 303);
+    assert.equal(ok.headers.get('location'), './');
+    const setCookie = ok.headers.get('set-cookie');
+    assert.match(setCookie, /^rack_session=[^;]+; HttpOnly; SameSite=Lax$/, 'bez Path i Max-Age (sesja do zamknięcia przeglądarki)');
+    const cookie = setCookie.split(';')[0];
+    assert.equal((await get('/', cookie)).status, 200);
+    assert.equal((await get('/login.html', cookie)).headers.get('location'), './', 'zalogowany nie widzi strony logowania');
+    assert.deepEqual(await (await get('/api/session', cookie)).json(), { auth: true, user: 'admin' });
+
+    const remember = await login('admin', 'tajne#1', '&remember=1');
+    assert.match(remember.headers.get('set-cookie'), /Max-Age=2592000/);
+
+    const forged = cookie.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
+    assert.equal((await get('/api/state', forged)).status, 401, 'podrobiony podpis nie przechodzi');
+
+    const out = await fetch(url + '/logout', { method: 'POST', redirect: 'manual', headers: { Cookie: cookie } });
+    assert.equal(out.headers.get('location'), 'login.html?wylogowano=1');
+    assert.match(out.headers.get('set-cookie'), /^rack_session=; .*Max-Age=0/);
+  } finally {
+    authed.kill();
+  }
+});
+
 it('logowanie blokuje adres po 10 nieudanych próbach', async () => {
   const p = BASE_PORT + 1;
   const authed = startServer(p, { AUTH_USER: 'admin', AUTH_PASSWORD: 'h#a s$ło' });

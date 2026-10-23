@@ -68,6 +68,17 @@ button,input,select,textarea{font:inherit;color:inherit}
 .search{position:relative;min-width:0}
 .search input{width:240px;max-width:100%;border:1px solid var(--stroke);background:var(--glass-2);border-radius:999px;padding:7px 14px}
 .banner{margin:-6px 0 14px;padding:9px 14px;font-size:12.5px;color:var(--muted);border-radius:14px}
+.banner a{color:var(--fg)}
+.tools form:not([hidden]){margin:0;display:contents}
+
+/* Strona logowania */
+.login{max-width:380px;margin:min(14vh,120px) auto 0;padding:28px 24px}
+.login h1{margin:6px 0 4px;font-size:22px;font-weight:700;letter-spacing:-.01em}
+.login-sub{margin:0;color:var(--muted);font-size:13px}
+.login input[type=text],.login input[type=password]{padding:10px 12px;font-size:15px}
+.login-btn{justify-content:center;padding:10px 14px;font-size:14px;margin-top:4px}
+.login-msg{margin-top:14px;padding:9px 12px;border-radius:10px;border:1px solid var(--danger);color:var(--danger);font-size:13px}
+.login-msg.ok{border-color:var(--accent);color:var(--accent)}
 
 /* Main grid */
 .app{display:grid;grid-template-columns:250px minmax(0,1fr) 370px;gap:16px;align-items:start}
@@ -147,7 +158,7 @@ td.lbl{font-family:var(--font-mono);font-weight:600;white-space:nowrap}
 .hint{font-size:11.5px;color:var(--faint)}
 .conflict{margin:10px 0 4px;padding:10px 12px;border-radius:12px;border:1px solid var(--danger);color:var(--danger);font-size:12.5px;line-height:1.5}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-input[type=text],input[type=number],select,textarea{width:100%;border:1px solid var(--stroke);background:var(--glass-2);border-radius:10px;padding:8px 10px;min-width:0}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;border:1px solid var(--stroke);background:var(--glass-2);border-radius:10px;padding:8px 10px;min-width:0}
 textarea{min-height:64px;resize:vertical}
 .seg{display:flex;flex-wrap:wrap;gap:5px}
 .seg button{border:1px solid var(--stroke);background:var(--glass-2);border-radius:999px;padding:5px 11px;font-size:12.5px;cursor:pointer;display:inline-flex;gap:6px;align-items:center}
