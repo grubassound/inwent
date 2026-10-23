@@ -6,6 +6,8 @@ const LANGS = { pl: 'Polski', en: 'English', nl: 'Nederlands', cs: 'Čeština' }
 
 const D = {
 pl: {
+  'zoom.in': 'Przybliż', 'zoom.out': 'Oddal', 'zoom.fit': 'Dopasuj', 'zoom.hint': 'Kliknij gniazdo, żeby edytować port. Ctrl + kółko myszy (albo gest szczypania) przybliża i oddala.',
+  'f.preset': 'Szablon modelu (Aruba)', 'preset.custom': '— własny / inny —',
   'app.title': 'Inwentaryzacja racka',
   'mode.connecting': 'Łączenie z serwerem…', 'mode.online': 'Dane w bazie MySQL · odświeżanie co 20 s', 'mode.offline': 'Brak połączenia z serwerem',
   'stats.ports': 'Porty', 'stats.verified': 'Zweryfikowane',
@@ -77,6 +79,8 @@ pl: {
   'err.server_error': 'Błąd serwera. Szczegóły są w logu aplikacji.', 'err.too_large': 'Za duży plik', 'err.bad_json': 'Niepoprawne dane',
 },
 en: {
+  'zoom.in': 'Zoom in', 'zoom.out': 'Zoom out', 'zoom.fit': 'Fit', 'zoom.hint': 'Click a socket to edit the port. Ctrl + mouse wheel (or pinch) zooms in and out.',
+  'f.preset': 'Model template (Aruba)', 'preset.custom': '— custom / other —',
   'app.title': 'Rack inventory',
   'mode.connecting': 'Connecting to server…', 'mode.online': 'Data in MySQL · refreshes every 20 s', 'mode.offline': 'No connection to server',
   'stats.ports': 'Ports', 'stats.verified': 'Verified',
@@ -148,6 +152,8 @@ en: {
   'err.server_error': 'Server error. Details are in the application log.', 'err.too_large': 'File too large', 'err.bad_json': 'Invalid data',
 },
 nl: {
+  'zoom.in': 'Inzoomen', 'zoom.out': 'Uitzoomen', 'zoom.fit': 'Passend', 'zoom.hint': 'Klik op een aansluiting om de poort te bewerken. Ctrl + muiswiel (of knijpen) zoomt in en uit.',
+  'f.preset': 'Modelsjabloon (Aruba)', 'preset.custom': '— eigen / ander —',
   'app.title': 'Rack-inventarisatie',
   'mode.connecting': 'Verbinden met server…', 'mode.online': 'Gegevens in MySQL · ververst elke 20 s', 'mode.offline': 'Geen verbinding met de server',
   'stats.ports': 'Poorten', 'stats.verified': 'Geverifieerd',
@@ -219,6 +225,8 @@ nl: {
   'err.server_error': 'Serverfout. Details staan in het applicatielogboek.', 'err.too_large': 'Bestand te groot', 'err.bad_json': 'Ongeldige gegevens',
 },
 cs: {
+  'zoom.in': 'Přiblížit', 'zoom.out': 'Oddálit', 'zoom.fit': 'Přizpůsobit', 'zoom.hint': 'Kliknutím na zásuvku upravíte port. Ctrl + kolečko myši (nebo sevření prstů) přibližuje a oddaluje.',
+  'f.preset': 'Šablona modelu (Aruba)', 'preset.custom': '— vlastní / jiný —',
   'app.title': 'Inventura racku',
   'mode.connecting': 'Připojování k serveru…', 'mode.online': 'Data v MySQL · obnovení každých 20 s', 'mode.offline': 'Bez spojení se serverem',
   'stats.ports': 'Porty', 'stats.verified': 'Ověřeno',

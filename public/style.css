@@ -160,6 +160,45 @@ select.compact{width:auto;padding:6px 8px;font-size:13px}
 .port.hit{box-shadow:0 0 0 3px var(--accent)}
 .sfp .port{width:46px;border-radius:3px}
 
+/* Panel switcha (SVG, w stylu Aruba). Obudowa ma ten sam wygląd w obu motywach – to sprzęt. */
+.chassis-bar{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.chassis-bar .spacer{flex:1}
+.zoom-val{min-width:44px;text-align:center;font-size:12px;color:var(--muted)}
+.chassis-wrap{overflow:auto;border-radius:10px;background:var(--face);border:1px solid var(--border);padding:12px;overscroll-behavior-x:contain}
+.chassis{display:block;max-width:none}
+.chassis.fit{width:100%;min-width:560px}
+.chassis-hint{margin:6px 0 0}
+.chassis .ear{fill:#565c64}
+.chassis .slot{fill:#1d2024}
+.chassis .model{font:700 11px var(--font-ui);fill:#eef1f4;letter-spacing:.02em}
+.chassis .sub{font:500 9px var(--font-mono);fill:#aab2bb}
+.chassis .sl{font:600 7px var(--font-mono);fill:#aab2bb}
+.chassis .sled{fill:#22262b;stroke:#141619}
+.chassis .sled.on{fill:#3ddc84}
+.chassis .pn{font:600 8px var(--font-mono);fill:#c9cfd6;text-anchor:middle;pointer-events:none}
+.sp{cursor:pointer;outline:none}
+.sp .jk{fill:#1b1e22;stroke:#5a616a;stroke-width:1.2}
+.sp .op{fill:#07080a}
+.sp .led{fill:#30353b}
+.sp .mod{fill:#b8bec5}
+.sp .sel{fill:none;stroke:none}
+.sp:hover .jk{fill:#2a2f35}
+.sp.s-used .jk{stroke:#2fbf71;stroke-width:2}
+.sp.s-used .led{fill:#4dff9a}
+.sp.s-reserved .jk{stroke:#5b95ff;stroke-width:2}
+.sp.s-reserved .led{fill:#7fb0ff}
+.sp.s-broken .jk{stroke:#ef5a5a;stroke-width:2}
+.sp.s-broken .led{fill:#ff6b6b}
+.sp.s-free .jk{stroke:#8a939d}
+.sp.s-unknown .jk{stroke:#e3a634;stroke-width:1.6;stroke-dasharray:3 2}
+.sp.sfp .jk{fill:#9ea5ad}
+.sp.sfp:hover .jk{fill:#b4bac1}
+.sp .vd{fill:#fff;stroke:#000;stroke-width:.6}
+.sp.hit .sel{stroke:var(--accent);stroke-width:2.5}
+.sp.picked .sel{stroke:#3ddc84;stroke-width:2;stroke-dasharray:3 2}
+.sp[aria-pressed="true"] .sel{stroke:#fff;stroke-width:2.5}
+.sp:focus-visible .sel{stroke:#3ddc84;stroke-width:2}
+
 .bulk{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border)}
 .port-table-wrap{margin-top:18px;overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:13px}

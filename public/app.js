@@ -14,6 +14,14 @@ const COLORS = [
 ];
 const colorHex = n => (COLORS.find(c=>c[0]===n)||[])[1];
 const colorName = n => n ? t('color.'+n) : '';
+// Szablony popularnych switchy Aruba: [model, porty RJ45, porty SFP/SFP+].
+const PRESETS = [
+  ['Aruba 2530-24G', 24, 4], ['Aruba 2530-24G-PoE+', 24, 4], ['Aruba 2530-48G', 48, 4], ['Aruba 2530-48G-PoE+', 48, 4],
+  ['Aruba 2540 24G 4SFP+', 24, 4], ['Aruba 2540 48G 4SFP+', 48, 4],
+  ['Aruba 2930F-24G-4SFP+', 24, 4], ['Aruba 2930F-48G-4SFP+', 48, 4],
+  ['Aruba CX 6100 24G 4SFP+', 24, 4], ['Aruba CX 6100 48G 4SFP+', 48, 4],
+  ['Aruba Instant On 1930 24G 4SFP/SFP+', 24, 4], ['Aruba Instant On 1930 48G 4SFP/SFP+', 48, 4],
+];
 
 let racks = {};
 let devices = {};
@@ -28,6 +36,9 @@ let confirmDelete = false;
 let history = null;          // {key, rows}
 let rackForm = null;         // null | 'new' | 'edit'
 let rackDelConfirm = false;
+// Powiększenie panelu switcha: 'fit' (do szerokości) albo skala względem rozmiaru bazowego. Zapamiętane w przeglądarce.
+const PREF_ZOOM = 'rack-inventory.zoom';
+let zoom = (() => { try { const z = parseFloat(localStorage.getItem(PREF_ZOOM)); return z >= 0.5 && z <= 4 ? z : 'fit'; } catch(e) { return 'fit'; } })();
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -207,20 +218,12 @@ function portBtn(id, n){
   return `<button class="${cls}" data-port="${n}" aria-pressed="${sel.dev===id&&sel.port==n}" title="${esc(tip)}" aria-label="${esc(tip)}"><span class="num">${n}</span>${hex?`<span class="cc" style="background:${hex}"></span>`:''}</button>`;
 }
 function portsMarkup(id){
+  // Patchpanele i inne urządzenia: moduły po 6 portów (switche mają panel SVG, patrz switchPanel).
   const d = devices[id]; const N = d.portCount||0; const groups = [];
-  if (d.kind === 'switch'){
-    for (let s=1; s<=N; s+=12){
-      const end = Math.min(s+11,N); const cols = Math.ceil((end-s+1)/2);
-      let top='', bot='';
-      for (let n=s;n<=end;n+=2){ top+=portBtn(id,n); if (n+1<=end) bot+=portBtn(id,n+1); }
-      groups.push(`<div class="group" style="grid-template-columns:repeat(${cols},38px)">${top}${bot}</div>`);
-    }
-  } else {
-    for (let s=1; s<=N; s+=6){
-      const end = Math.min(s+5,N); let h='';
-      for (let n=s;n<=end;n++) h+=portBtn(id,n);
-      groups.push(`<div class="group" style="grid-template-columns:repeat(${end-s+1},38px)">${h}</div>`);
-    }
+  for (let s=1; s<=N; s+=6){
+    const end = Math.min(s+5,N); let h='';
+    for (let n=s;n<=end;n++) h+=portBtn(id,n);
+    groups.push(`<div class="group" style="grid-template-columns:repeat(${end-s+1},38px)">${h}</div>`);
   }
   if (d.sfp){
     let top='', bot='';
@@ -228,6 +231,94 @@ function portsMarkup(id){
     groups.push(`<div class="group sfp" style="grid-template-columns:repeat(${Math.ceil(d.sfp/2)},46px)">${top}${bot}</div>`);
   }
   return groups.join('');
+}
+// Przedni panel switcha 1U w stylu Aruba (SVG): porty w blokach po 12, nieparzyste u góry, parzyste u dołu,
+// moduły SFP po prawej. Każde gniazdo to <g data-port>, obsługiwane tak samo jak przyciski portów.
+const PANEL = {P:30, JW:26, JH:21, GAP:16, EAR:24, LEFT:128, H:98, TOP:24, ROW2:53, SP:40, MINW:1064};
+function switchGeom(d){
+  const N = d.portCount||0, S = d.sfp||0, g = PANEL;
+  const blocks = Math.ceil(N/12);
+  const portsW = blocks ? blocks*6*g.P + (blocks-1)*g.GAP : 0;
+  const sfpW = Math.ceil(S/2)*g.SP;
+  const W = Math.max(g.MINW, g.EAR*2 + g.LEFT + portsW + 40 + sfpW + 20);
+  return {N, S, W, H:g.H, sfpX: W - g.EAR - 16 - sfpW};
+}
+function switchPanel(id){
+  const d = devices[id], g = PANEL, {N, S, W, H, sfpX} = switchGeom(d);
+  const x0 = g.EAR + g.LEFT;
+  const out = [];
+  const port = (n, x, y, bottom, sfp) => {
+    const r = portRec(id,n), st = r.status||'unknown', hex = colorHex(r.color);
+    const cls = ['sp', 's-'+st, sfp?'sfp':'', bulk.set.has(n)?'picked':'', isHit(id,n)?'hit':''].join(' ');
+    const tip = label(id,n)+' · '+stLabel(st) + (r.dest?' · '+r.dest:'') + (r.link&&devices[r.link.dev]?' · ⇄ '+label(r.link.dev,r.link.port):'');
+    const plugged = st==='used' || r.link;
+    let body;
+    if (sfp){
+      body = `<rect class="jk" width="32" height="18" rx="1.5"/><rect class="op" x="3" y="3" width="26" height="12" rx="1"/>`
+        + (plugged ? `<rect class="mod" x="4" y="4" width="24" height="10" rx="1"/><rect x="4" y="${bottom?4:11}" width="24" height="3" fill="${hex||'#8d96a0'}"/>` : '');
+    } else {
+      const op = bottom ? 'M3 18H23V6H17V3H9V6H3Z' : 'M3 3H23V15H17V18H9V15H3Z';
+      body = `<rect class="jk" width="${g.JW}" height="${g.JH}" rx="2"/><path class="op" d="${op}"/>`
+        + (plugged ? `<rect x="5" y="${bottom?7:4}" width="16" height="10" rx="1.5" fill="${hex||'#8d96a0'}" class="plug"/>` : '')
+        + `<rect class="led" x="${bottom?19:2}" y="${bottom?19.2:0.6}" width="5" height="1.6" rx=".8"/>`;
+    }
+    const w = sfp?32:g.JW, h = sfp?18:g.JH;
+    out.push(`<g class="${cls}" data-port="${n}" transform="translate(${x},${y})" role="button" tabindex="0" aria-pressed="${sel.dev===id&&sel.port==n}" aria-label="${esc(tip)}"><title>${esc(tip)}</title>`
+      + `<rect class="sel" x="-3" y="-3" width="${w+6}" height="${h+6}" rx="3"/>${body}`
+      + (r.verified ? `<circle class="vd" cx="${w-3}" cy="${bottom?h-3:3}" r="1.8"/>` : '') + `</g>`);
+    out.push(`<text class="pn" x="${x+w/2}" y="${bottom ? y+h+10 : y-4}">${n}</text>`);
+  };
+  for (let n=1; n<=N; n++){
+    const i = n-1, b = Math.floor(i/12), w = i%12, col = Math.floor(w/2), bottom = w%2===1;
+    port(n, x0 + b*(6*g.P+g.GAP) + col*g.P, bottom ? g.ROW2 : g.TOP, bottom, false);
+  }
+  for (let k=0; k<S; k++){
+    const bottom = k%2===1;
+    port(N+1+k, sfpX + Math.floor(k/2)*g.SP, bottom ? g.ROW2+2 : g.TOP, bottom, true);
+  }
+  const ear = x => `<rect class="ear" x="${x}" y="0" width="${g.EAR}" height="${H}" rx="3"/><rect class="slot" x="${x+7}" y="16" width="10" height="6" rx="3"/><rect class="slot" x="${x+7}" y="${H-22}" width="10" height="6" rx="3"/>`;
+  const leds = ['PWR','FLT','LOC'].map((l,i)=>`<circle class="sled${i?'':' on'}" cx="${g.EAR+16}" cy="${46+i*14}" r="3"/><text class="sl" x="${g.EAR+24}" y="${49+i*14}">${l}</text>`).join('');
+  return `<svg class="chassis" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" data-w="${W}" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="${esc(d.model||d.name)}">
+    <defs><linearGradient id="chg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a5058"/><stop offset=".5" stop-color="#363b41"/><stop offset="1" stop-color="#2a2e33"/></linearGradient></defs>
+    <rect class="body" x="0" y="0" width="${W}" height="${H}" rx="4" fill="url(#chg)"/>
+    ${ear(0)}${ear(W-g.EAR)}
+    <text class="model" x="${g.EAR+12}" y="26">${esc((d.model||d.name).slice(0,22))}</text>
+    <text class="sub" x="${g.EAR+12}" y="37">${esc(d.short||'')}</text>
+    ${leds}
+    ${out.join('')}
+  </svg>`;
+}
+function zoomBar(){
+  return `<div class="chassis-bar"><span class="eyebrow">${esc(t('face.switch'))}</span><span class="spacer"></span>
+    <button class="btn small icon" data-act="zoomOut" title="${esc(t('zoom.out'))}" aria-label="${esc(t('zoom.out'))}">−</button>
+    <span class="mono zoom-val" id="zoomVal"></span>
+    <button class="btn small icon" data-act="zoomIn" title="${esc(t('zoom.in'))}" aria-label="${esc(t('zoom.in'))}">+</button>
+    <button class="btn small" data-act="zoomFit">${esc(t('zoom.fit'))}</button></div>`;
+}
+// Ustawia rozmiar SVG zgodnie z powiększeniem, bez przerysowania panelu.
+function applyZoom(){
+  const svg = document.querySelector('#ports .chassis'); if (!svg) return;
+  const base = Number(svg.dataset.w);
+  if (zoom === 'fit'){ svg.classList.add('fit'); svg.style.width = ''; }
+  else { svg.classList.remove('fit'); svg.style.width = Math.round(base*zoom)+'px'; }
+  svg.style.height = 'auto';
+  const v = $('zoomVal'); if (v) v.textContent = Math.round(svg.getBoundingClientRect().width / base * 100) + '%';
+}
+// Zmiana powiększenia z zachowaniem punktu pod kursorem (albo środka widoku).
+function setZoom(next, clientX){
+  const wrap = $('ports'), svg = wrap && wrap.querySelector('.chassis'); if (!svg) return;
+  const base = Number(svg.dataset.w), cur = svg.getBoundingClientRect().width / base;
+  const box = wrap.getBoundingClientRect(), px = (clientX ?? box.left + box.width/2) - box.left;
+  const anchor = (wrap.scrollLeft + px) / cur;
+  zoom = next === 'fit' ? 'fit' : Math.min(4, Math.max(0.5, Math.round(next*100)/100));
+  try { localStorage.setItem(PREF_ZOOM, String(zoom)); } catch(e) {}
+  applyZoom();
+  const now = svg.getBoundingClientRect().width / base;
+  wrap.scrollLeft = anchor*now - px;
+}
+function currentScale(){
+  const svg = document.querySelector('#ports .chassis');
+  return svg ? svg.getBoundingClientRect().width / Number(svg.dataset.w) : 1;
 }
 function deviceForm(d){
   d = d || {name:'',short:'',kind:'patch',portCount:24,sfp:0,status:'active',model:'',notes:'',rack:sel.rack};
@@ -238,6 +329,7 @@ function deviceForm(d){
     <div class="row2"><div class="field"><label for="f_name">${esc(t('f.name'))}</label><input id="f_name" type="text" value="${esc(d.name)}"></div>
     <div class="field"><label for="f_short">${esc(t('f.prefix'))}</label><input id="f_short" type="text" value="${esc(d.short)}" placeholder="${esc(t('ph.prefix'))}"></div></div>
     ${rackField}
+    <div class="field"><label for="f_preset">${esc(t('f.preset'))}</label><select id="f_preset"><option value="">${esc(t('preset.custom'))}</option>${PRESETS.map(([m,pc,sf],i)=>`<option value="${i}" ${d.model===m?'selected':''}>${esc(m)} (${pc} + ${sf} SFP)</option>`).join('')}</select></div>
     <div class="row2"><div class="field"><label for="f_kind">${esc(t('f.kind'))}</label><select id="f_kind">${KINDS.map(k=>opt(k, d.kind, t('kind.'+k))).join('')}</select></div>
     <div class="field"><label for="f_status">${esc(t('f.state'))}</label><select id="f_status">${DEVSTATUS.map(k=>opt(k, d.status, t('devstatus.'+k))).join('')}</select></div></div>
     <div class="row2"><div class="field"><label for="f_ports">${esc(t('f.ports'))}</label><input id="f_ports" type="number" min="1" max="96" value="${Number.isFinite(d.portCount)?d.portCount:''}"></div>
@@ -272,6 +364,7 @@ function renderDevice(force){
     return;
   }
   const c = counts(d);
+  const prevWrap = el.querySelector('.chassis-wrap'), keepScroll = prevWrap && prevWrap.dataset.dev === id ? prevWrap.scrollLeft : 0;
   el.innerHTML = `
     <div class="dev-head"><div><div class="eyebrow">${esc(KINDS.includes(d.kind)?t('kind.'+d.kind):t('dev.device'))} · ${esc(t('dev.ports',{n:totalPorts(d)}))}</div><h2>${esc(d.name)}</h2>
       <div class="dev-meta">
@@ -285,15 +378,18 @@ function renderDevice(force){
     </div>
     ${devForm==='edit'?deviceForm(devDraft||d):''}
     <div class="legend">${Object.keys(STATUS).map(k=>`<span>${dot(k)}${esc(stLabel(k))}</span>`).join('')}<span><i class="dot" style="background:#fff;border-radius:50%;box-shadow:0 0 0 1.5px var(--border-strong)"></i>${esc(t('legend.verified'))}</span><span>${esc(t('legend.cable'))}</span></div>
+    ${d.kind==='switch' ? `${zoomBar()}<div class="chassis-wrap" id="ports">${switchPanel(id)}</div><p class="hint chassis-hint">${esc(t('zoom.hint'))}</p>` : `
     <div class="faceplate" style="overflow-x:auto">
-      <div class="ears"><span>${esc(d.short||d.name)}</span><span>${esc(t(d.kind==='switch'?'face.switch':'face.front'))}</span></div>
+      <div class="ears"><span>${esc(d.short||d.name)}</span><span>${esc(t('face.front'))}</span></div>
       <div class="groups" id="ports">${portsMarkup(id)}</div>
-    </div>
+    </div>`}
     ${bulk.on?`<div class="bulk"><span class="mono">${esc(t('bulk.selected',{n:bulk.set.size}))}</span>
       ${Object.keys(STATUS).map(k=>`<button class="btn small" data-act="bulkSet" data-st="${k}" ${bulk.set.size?'':'disabled'}>${dot(k)}${esc(stLabel(k))}</button>`).join('')}
       <button class="btn small" data-act="bulkVerify" ${bulk.set.size?'':'disabled'}>${esc(t('bulk.verify'))}</button>
       <button class="btn small" data-act="bulkAll">${esc(t('bulk.all'))}</button><button class="btn small" data-act="bulkNone">${esc(t('bulk.none'))}</button></div>`:''}
     <div class="port-table-wrap">${portTable(id)}</div>`;
+  const wrap = el.querySelector('.chassis-wrap');
+  if (wrap){ wrap.dataset.dev = id; applyZoom(); wrap.scrollLeft = keepScroll; }
 }
 function portTable(id){
   const d = devices[id]; const rows=[];
@@ -548,6 +644,9 @@ document.addEventListener('click', async e => {
       render(); break;
     }
     case 'importNo': pendingImport=null; renderHeader(); break;
+    case 'zoomIn': setZoom(currentScale()*1.25); break;
+    case 'zoomOut': setZoom(currentScale()/1.25); break;
+    case 'zoomFit': setZoom('fit'); break;
     case 'rackNew': case 'rackEdit': {
       const mode = a==='rackNew' ? 'new' : 'edit';
       rackForm = rackForm===mode ? null : mode; rackDelConfirm = false; renderRackForm(true);
@@ -590,6 +689,11 @@ document.addEventListener('change', e => {
     rackForm = null; renderRackForm(); setRack(v); render();
     return;
   }
+  if (e.target.id==='f_preset' && e.target.value !== ''){
+    const [m, pc, sf] = PRESETS[Number(e.target.value)];
+    $('f_model').value = m; $('f_ports').value = pc; $('f_sfp').value = sf; $('f_kind').value = 'switch';
+    return;
+  }
   if (e.target.id==='e_ldev'){ readDraft(); const v = e.target.value; if (v) draft.link = {dev:v, port:''}; else delete draft.link; renderEditor(); }
   if (e.target.id==='e_lport'){ readDraft(); if (draft.link) draft.link.port = e.target.value; }
 });
@@ -611,6 +715,20 @@ $('importFile').addEventListener('change', e => {
   };
   rd.readAsText(f);
 });
+// Gniazda w panelu SVG: Enter/spacja działa jak kliknięcie.
+document.addEventListener('keydown', e => {
+  const a = document.activeElement;
+  if ((e.key==='Enter' || e.key===' ') && a && a.matches && a.matches('#ports [data-port]')){
+    e.preventDefault(); a.dispatchEvent(new MouseEvent('click', {bubbles:true}));
+  }
+});
+// Ctrl + kółko (i gest szczypania na touchpadzie) przybliża panel w miejscu kursora.
+document.addEventListener('wheel', e => {
+  if (!e.ctrlKey || !e.target.closest || !e.target.closest('.chassis-wrap')) return;
+  e.preventDefault();
+  setZoom(currentScale() * Math.exp(-e.deltaY * 0.0025), e.clientX);
+}, {passive:false});
+window.addEventListener('resize', () => { if (zoom === 'fit') applyZoom(); });
 document.addEventListener('keydown', e => {
   if (!sel.port || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
   if (e.key==='ArrowRight') step(1); else if (e.key==='ArrowLeft') step(-1); else if (e.key==='Escape' && canLeavePort()){ sel.port=null; draft=null; render(); }

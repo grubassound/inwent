@@ -39,7 +39,7 @@ przeglądarka ──► Apache :80/:443 ──► Node.js 127.0.0.1:3080 ──�
 - **Motyw jasny i ciemny:** przełącznik ☀/☾ w nagłówku. Bez wyboru obowiązuje motyw systemu.
 - **Wiele racków.** Przełączasz je listą nad szafą, a przyciskami ✎ i + edytujesz bieżący albo dodajesz nowy (nazwa, lokalizacja, notatki). Aplikacja pamięta ostatnio oglądany rack. Urządzenie przeniesiesz do innego racka w jego edycji (pole „Rack”). Patchcord może łączyć porty w różnych rackach. Wtedy etykieta drugiego końca ma nazwę racka, np. `Serwerownia › A5`.
 - **Widok szafy** od góry do dołu z paskiem zajętości każdego urządzenia.
-- **Front urządzenia.** Switche mają porty nieparzyste u góry i parzyste u dołu, plus porty SFP. Patchpanele mają moduły po 6 portów.
+- **Front urządzenia.** Switche mają realistyczny przedni panel 1U w stylu Aruba: gniazda RJ45 w blokach po 12 (nieparzyste u góry, parzyste u dołu), moduły SFP po prawej, diody stanu i wtyczki w kolorze kabla. Kliknięcie gniazda otwiera kartę portu. Panel można przybliżać i oddalać (przyciski −/+/Dopasuj, Ctrl + kółko myszy albo gest szczypania na touchpadzie), a powiększenie jest zapamiętane. W formularzu urządzenia jest lista szablonów popularnych modeli Aruba (2530, 2540, 2930F, CX 6100, Instant On 1930), która wypełnia liczbę portów i model. Patchpanele mają moduły po 6 portów.
 - **Statusy portów:** do ustalenia, zajęty, wolny, rezerwacja, uszkodzony. Dodatkowo znacznik „zweryfikowany fizycznie”.
 - **Patchcordy zapisują się po obu stronach w jednej transakcji.** Przepięcie automatycznie zwalnia stary koniec: port „Zajęty” wraca wtedy do „Do ustalenia”. Kolor, długość i etykieta kabla są wspólne dla obu końców.
 - **Trasa kabla:** `PKN01:12 ⇄ B7 → Biuro 1.12, gniazdo 3 (Drukarka)`.
