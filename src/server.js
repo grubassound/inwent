@@ -2,7 +2,8 @@
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
-const { pool } = require('./db');
+const { pool, config } = require('./db');
+const { runMigrations, ensureDefaultRack } = require('./migrate');
 const TEMPLATE = require('./template');
 
 const PORT = Number(process.env.PORT || 3080);
@@ -31,7 +32,7 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const SESSION_COOKIE = 'rack_session';
 const SESSION_MS = 12 * 60 * 60 * 1000;        // bez „Zapamiętaj mnie”
 const REMEMBER_MS = 30 * 24 * 60 * 60 * 1000;  // z „Zapamiętaj mnie”
-const PUBLIC_FILES = new Set(['/login.html', '/style.css', '/favicon.ico']);
+const PUBLIC_FILES = new Set(['/login.html', '/style.css', '/favicon.svg']);
 const authFails = new Map(); // ip -> { n, reset }
 
 let SESSION_SECRET = process.env.SESSION_SECRET || '';
@@ -180,12 +181,15 @@ function portOut(r) {
 }
 // withRev: dokładny czas ostatniej zmiany portu, którym frontend wykrywa równoczesną edycję.
 async function getState(db = pool, withRev = true) {
+  const [rks] = await db.query('SELECT * FROM racks ORDER BY sort_order, id');
   const [devs] = await db.query('SELECT * FROM devices ORDER BY sort_order, id');
   const [ports] = await db.query('SELECT * FROM ports');
+  const racks = {};
+  for (const r of rks) racks[r.id] = { name: r.name, location: r.location || '', notes: r.notes || '', order: r.sort_order };
   const devices = {};
   for (const d of devs) {
     devices[d.id] = {
-      name: d.name, short: d.short, kind: d.kind, portCount: d.port_count, sfp: d.sfp,
+      rack: d.rack_id, name: d.name, short: d.short, kind: d.kind, portCount: d.port_count, sfp: d.sfp,
       status: d.status, model: d.model || '', notes: d.notes || '', order: d.sort_order, ports: {},
     };
   }
@@ -195,7 +199,31 @@ async function getState(db = pool, withRev = true) {
     if (withRev) o.rev = String(p.updated_at);
     devices[p.device_id].ports[p.port_no] = o;
   }
-  return { devices };
+  return { racks, devices };
+}
+async function rackOrThrow(db, id) {
+  const [[r]] = await db.query('SELECT * FROM racks WHERE id=?', [String(id)]);
+  if (!r) throw new HttpError(404, `Nie ma racka „${id}”`);
+  return r;
+}
+function rackFields(b, base = {}) {
+  return {
+    name: txt(b.name, 120) || base.name || 'Rack',
+    location: b.location === undefined ? base.location || '' : txt(b.location, 255) || '',
+    notes: b.notes === undefined ? base.notes || '' : b.notes == null ? '' : String(b.notes).slice(0, 5000),
+  };
+}
+// Wolne id na podstawie nazwy: „Serwerownia” → serwerownia, serwerownia-2, …
+async function freeId(c, table, name) {
+  const base = slug(name);
+  for (let id = base, i = 2; ; id = `${base}-${i++}`) {
+    const [[x]] = await c.query(`SELECT id FROM ${table} WHERE id=?`, [id]);
+    if (!x) return id;
+  }
+}
+async function nextOrder(c, rackId) {
+  const [[{ m }]] = await c.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM devices WHERE rack_id=?', [rackId]);
+  return m + 10;
 }
 async function deviceOrThrow(db, id) {
   const [[d]] = await db.query('SELECT * FROM devices WHERE id=?', [id]);
@@ -285,45 +313,92 @@ app.get('/api/state', wrap(async (req, res) => res.json(await getState())));
 
 app.get('/api/session', (req, res) => res.json({ auth: AUTH_ON, user: req.user || null }));
 
+// Układ z inwentaryzacji (src/template.js). Tylko do zupełnie pustej bazy, bo id urządzeń są stałe.
 app.post('/api/seed', wrap(async (req, res) => {
+  const b = req.body || {};
   await withTx(async (c) => {
     const [[{ n }]] = await c.query('SELECT COUNT(*) AS n FROM devices');
-    if (n > 0) throw new HttpError(409, 'Rack nie jest pusty');
+    if (n > 0) throw new HttpError(409, 'Układ z inwentaryzacji można wczytać tylko do pustej bazy');
+    const rackId = b.rack ? (await rackOrThrow(c, b.rack)).id : await ensureDefaultRack(c);
     let order = 10;
     for (const [id, name, short, kind, pc, sfp, status, model, notes] of TEMPLATE) {
-      await c.query('INSERT INTO devices (id,name,short,kind,port_count,sfp,status,model,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)',
-        [id, name, short, kind, pc, sfp, status, model, notes, order]);
+      await c.query('INSERT INTO devices (id,rack_id,name,short,kind,port_count,sfp,status,model,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [id, rackId, name, short, kind, pc, sfp, status, model, notes, order]);
       order += 10;
     }
   });
   res.json(await getState());
 }));
 
-app.post('/api/devices', wrap(async (req, res) => {
-  const f = deviceFields(req.body || {});
+/* racki */
+app.post('/api/racks', wrap(async (req, res) => {
+  const f = rackFields(req.body || {});
   const id = await withTx(async (c) => {
-    let id = slug(f.short || f.name), i = 2;
-    for (;;) {
-      const [[x]] = await c.query('SELECT id FROM devices WHERE id=?', [id]);
-      if (!x) break;
-      id = `${slug(f.short || f.name)}-${i++}`;
-    }
-    const [[{ m }]] = await c.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM devices');
-    await c.query('INSERT INTO devices (id,name,short,kind,port_count,sfp,status,model,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [id, f.name, f.short, f.kind, f.port_count, f.sfp, f.status, f.model, f.notes, m + 10]);
+    const id = await freeId(c, 'racks', f.name);
+    const [[{ m }]] = await c.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM racks');
+    await c.query('INSERT INTO racks (id,name,location,notes,sort_order) VALUES (?,?,?,?,?)', [id, f.name, f.location, f.notes, m + 10]);
+    return id;
+  });
+  res.json({ id, ...(await getState()) });
+}));
+
+app.put('/api/racks/:id', wrap(async (req, res) => {
+  const r = await rackOrThrow(pool, req.params.id);
+  const f = rackFields(req.body || {}, r);
+  await pool.query('UPDATE racks SET name=?, location=?, notes=? WHERE id=?', [f.name, f.location, f.notes, r.id]);
+  res.json(await getState());
+}));
+
+// Usuwa tylko pusty rack i nigdy ostatniego. Urządzenia trzeba najpierw przenieść albo usunąć.
+app.delete('/api/racks/:id', wrap(async (req, res) => {
+  await withTx(async (c) => {
+    const r = await rackOrThrow(c, req.params.id);
+    const [[{ n }]] = await c.query('SELECT COUNT(*) AS n FROM devices WHERE rack_id=?', [r.id]);
+    if (n > 0) throw new HttpError(409, `W racku „${r.name}” są urządzenia (${n}). Przenieś je albo usuń.`);
+    const [[{ all }]] = await c.query('SELECT COUNT(*) AS `all` FROM racks');
+    if (all <= 1) throw new HttpError(409, 'Musi zostać co najmniej jeden rack');
+    await c.query('DELETE FROM racks WHERE id=?', [r.id]);
+  });
+  res.json(await getState());
+}));
+
+app.post('/api/racks/reorder', wrap(async (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+  await withTx(async (c) => {
+    for (let i = 0; i < ids.length; i++) await c.query('UPDATE racks SET sort_order=? WHERE id=?', [(i + 1) * 10, String(ids[i])]);
+  });
+  res.json(await getState());
+}));
+
+/* urządzenia */
+app.post('/api/devices', wrap(async (req, res) => {
+  const b = req.body || {};
+  const f = deviceFields(b);
+  const id = await withTx(async (c) => {
+    const rackId = b.rack ? (await rackOrThrow(c, b.rack)).id : await ensureDefaultRack(c);
+    const id = await freeId(c, 'devices', f.short || f.name);
+    await c.query('INSERT INTO devices (id,rack_id,name,short,kind,port_count,sfp,status,model,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      [id, rackId, f.name, f.short, f.kind, f.port_count, f.sfp, f.status, f.model, f.notes, await nextOrder(c, rackId)]);
     return id;
   });
   res.json({ id, ...(await getState()) });
 }));
 
 // Zmniejszenie liczby portów usuwa opis portów poza zakresem i odpina prowadzące do nich patchcordy.
+// `rack` przenosi urządzenie do innego racka (na koniec listy); patchcordy zostają.
 app.put('/api/devices/:id', wrap(async (req, res) => {
+  const b = req.body || {};
   const by = who(req);
   await withTx(async (c) => {
     const d = await deviceOrThrow(c, req.params.id);
-    const f = deviceFields(req.body || {}, d);
-    await c.query('UPDATE devices SET name=?,short=?,kind=?,port_count=?,sfp=?,status=?,model=?,notes=? WHERE id=?',
-      [f.name, f.short, f.kind, f.port_count, f.sfp, f.status, f.model, f.notes, d.id]);
+    const f = deviceFields(b, d);
+    let rackId = d.rack_id, order = d.sort_order;
+    if (b.rack !== undefined && String(b.rack) !== d.rack_id) {
+      rackId = (await rackOrThrow(c, b.rack)).id;
+      order = await nextOrder(c, rackId);
+    }
+    await c.query('UPDATE devices SET rack_id=?,name=?,short=?,kind=?,port_count=?,sfp=?,status=?,model=?,notes=?,sort_order=? WHERE id=?',
+      [rackId, f.name, f.short, f.kind, f.port_count, f.sfp, f.status, f.model, f.notes, order, d.id]);
     const total = f.port_count + f.sfp;
     if (total < d.port_count + d.sfp) {
       const [gone] = await c.query('SELECT port_no, link_device, link_port FROM ports WHERE device_id=? AND port_no>? AND link_device IS NOT NULL',
@@ -466,17 +541,24 @@ function label(devs, id, n) {
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 app.get('/api/export.csv', wrap(async (req, res) => {
-  const { devices } = await getState(pool, false);
+  const { racks, devices } = await getState(pool, false);
+  const rackName = (id) => (racks[id] ? racks[id].name : '');
+  // Patchcord do innego racka: z nazwą tamtego racka.
+  const linkLabel = (fromDev, l) => {
+    const t = devices[l.dev];
+    const s = label(devices, l.dev, l.port);
+    return t && t.rack !== devices[fromDev].rack ? `${rackName(t.rack)} › ${s}` : s;
+  };
   const cell = (v) => {
     v = String(v ?? '');
     if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`; // Excel nie potraktuje tekstu jak formuły
     return /[";\n\r,]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
   };
-  const rows = [['Urządzenie', 'Port', 'Etykieta', 'Status', 'Patchcord do', 'Dokąd prowadzi', 'Urządzenie końcowe', 'VLAN', 'Kolor', 'Długość', 'Etykieta kabla', 'Zweryfikowany', 'Plan', 'Notatki', 'Zmiana']];
+  const rows = [['Rack', 'Urządzenie', 'Port', 'Etykieta', 'Status', 'Patchcord do', 'Dokąd prowadzi', 'Urządzenie końcowe', 'VLAN', 'Kolor', 'Długość', 'Etykieta kabla', 'Zweryfikowany', 'Plan', 'Notatki', 'Zmiana']];
   for (const [id, d] of Object.entries(devices)) {
     for (let n = 1; n <= d.portCount + d.sfp; n++) {
       const r = d.ports[n] || {};
-      rows.push([d.name, n, label(devices, id, n), STATUS_PL[r.status || 'unknown'], r.link ? label(devices, r.link.dev, r.link.port) : '',
+      rows.push([rackName(d.rack), d.name, n, label(devices, id, n), STATUS_PL[r.status || 'unknown'], r.link ? linkLabel(id, r.link) : '',
         r.dest, r.endpoint, r.vlan, r.color, r.length, r.cord, r.verified ? 'tak' : '', r.plan, r.notes, r.updated]);
     }
   }
@@ -491,22 +573,38 @@ app.get('/api/export.json', wrap(async (req, res) => {
   res.json({ exported: new Date().toISOString(), ...state });
 }));
 
-// Import kopii JSON (także z wersji-artefaktu Claude). Nadpisuje urządzenia o tych samych id,
+// Import kopii JSON (także z wersji-artefaktu Claude). Nadpisuje racki i urządzenia o tych samych id,
 // a potem porządkuje patchcordy (oba końce, istniejące porty).
+// Urządzenie bez racka (kopie sprzed wielu racków) zostaje w swoim racku albo trafia do `rack` z zapytania.
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 app.post('/api/import', wrap(async (req, res) => {
-  const data = (req.body && (req.body.devices || req.body)) || {};
-  if (typeof data !== 'object' || Array.isArray(data)) throw new HttpError(400, 'Niepoprawna kopia JSON');
-  const entries = Object.entries(data).filter(([id, d]) => /^[A-Za-z0-9_-]{1,64}$/.test(id) && d && typeof d === 'object');
+  const body = req.body || {};
+  const data = body.devices || body;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new HttpError(400, 'Niepoprawna kopia JSON');
+  const entries = Object.entries(data).filter(([id, d]) => ID_RE.test(id) && d && typeof d === 'object' && id !== 'racks');
+  const rackEntries = body.racks && typeof body.racks === 'object' && !Array.isArray(body.racks)
+    ? Object.entries(body.racks).filter(([id, r]) => ID_RE.test(id) && r && typeof r === 'object') : [];
   await withTx(async (c) => {
+    for (const [id, r] of rackEntries) {
+      const f = rackFields(r);
+      await c.query(`INSERT INTO racks (id,name,location,notes,sort_order) VALUES (?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE name=VALUES(name), location=VALUES(location), notes=VALUES(notes), sort_order=VALUES(sort_order)`,
+        [id, f.name, f.location, f.notes, Number.isFinite(r.order) ? r.order : 0]);
+    }
+    const [rks] = await c.query('SELECT id FROM racks');
+    const rackIds = new Set(rks.map((r) => r.id));
+    const fallback = rackIds.has(String(body.rack)) ? String(body.rack) : await ensureDefaultRack(c);
     let i = 0;
     for (const [id, d] of entries) {
       const f = deviceFields(d);
       const order = Number.isFinite(d.order) ? d.order : (++i) * 10;
+      const [[cur]] = await c.query('SELECT rack_id FROM devices WHERE id=?', [id]);
+      const rackId = rackIds.has(String(d.rack)) ? String(d.rack) : cur ? cur.rack_id : fallback;
       await c.query(
-        `INSERT INTO devices (id,name,short,kind,port_count,sfp,status,model,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?)
-         ON DUPLICATE KEY UPDATE name=VALUES(name), short=VALUES(short), kind=VALUES(kind), port_count=VALUES(port_count),
+        `INSERT INTO devices (id,rack_id,name,short,kind,port_count,sfp,status,model,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE rack_id=VALUES(rack_id), name=VALUES(name), short=VALUES(short), kind=VALUES(kind), port_count=VALUES(port_count),
            sfp=VALUES(sfp), status=VALUES(status), model=VALUES(model), notes=VALUES(notes), sort_order=VALUES(sort_order)`,
-        [id, f.name, f.short, f.kind, f.port_count, f.sfp, f.status, f.model, f.notes, order]);
+        [id, rackId, f.name, f.short, f.kind, f.port_count, f.sfp, f.status, f.model, f.notes, order]);
       await c.query('DELETE FROM ports WHERE device_id=?', [id]);
       for (const [pn, p] of Object.entries(d.ports || {})) {
         const n = parseInt(pn, 10);
@@ -521,7 +619,7 @@ app.post('/api/import', wrap(async (req, res) => {
     }
     await normalizeLinks(c, new Set(entries.map(([id]) => id)));
   });
-  res.json({ imported: entries.length, ...(await getState()) });
+  res.json({ imported: entries.length, importedRacks: rackEntries.length, ...(await getState()) });
 }));
 
 /* ---------- błędy ---------- */
@@ -543,7 +641,13 @@ async function housekeeping() {
 }
 setInterval(housekeeping, 60 * 60 * 1000).unref();
 
-app.listen(PORT, HOST, () => {
-  console.log(`Rack Inventory działa na http://${HOST}:${PORT}`);
-  housekeeping();
+// Najpierw schemat i migracje bazy, potem nasłuch.
+runMigrations(config).then(() => {
+  app.listen(PORT, HOST, () => {
+    console.log(`Rack Inventory działa na http://${HOST}:${PORT}`);
+    housekeeping();
+  });
+}).catch((e) => {
+  console.error('Nie udało się przygotować bazy danych:', e.message);
+  process.exit(1);
 });

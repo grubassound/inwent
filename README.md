@@ -35,6 +35,7 @@ przeglądarka ──► Apache :80/:443 ──► Node.js 127.0.0.1:3080 ──�
 
 ## Co potrafi
 
+- **Wiele racków.** Przełączasz je listą nad szafą, a przyciskami ✎ i + edytujesz bieżący albo dodajesz nowy (nazwa, lokalizacja, notatki). Aplikacja pamięta ostatnio oglądany rack. Urządzenie przeniesiesz do innego racka w jego edycji (pole „Rack”). Patchcord może łączyć porty w różnych rackach. Wtedy etykieta drugiego końca ma nazwę racka, np. `Serwerownia › A5`.
 - **Widok szafy** od góry do dołu z paskiem zajętości każdego urządzenia.
 - **Front urządzenia.** Switche mają porty nieparzyste u góry i parzyste u dołu, plus porty SFP. Patchpanele mają moduły po 6 portów.
 - **Statusy portów:** do ustalenia, zajęty, wolny, rezerwacja, uszkodzony. Dodatkowo znacznik „zweryfikowany fizycznie”.
@@ -44,7 +45,7 @@ przeglądarka ──► Apache :80/:443 ──► Node.js 127.0.0.1:3080 ──�
 - **Zaznaczanie wielu portów** i hurtowa zmiana statusu. Hurtowe „Wolny” odpina patchcordy z zaznaczonych portów.
 - **Ochrona przed nadpisaniem:** gdy dwie osoby edytują ten sam port, druga dostaje ostrzeżenie z aktualnym stanem z bazy i sama decyduje, czy nadpisać. Przy przejściu do innego portu aplikacja pyta o niezapisane zmiany.
 - **Zmniejszenie liczby portów urządzenia** usuwa opis portów spoza nowego zakresu i odpina prowadzące do nich patchcordy. Aplikacja najpierw pyta o zgodę.
-- **Wyszukiwarka** po pokoju, gnieździe, VLAN-ie, etykiecie i notatkach.
+- **Wyszukiwarka** po pokoju, gnieździe, VLAN-ie, etykiecie i notatkach, we wszystkich rackach. Kliknięcie wyniku przełącza na właściwy rack.
 - **Historia zmian** każdego portu: kto i kiedy zmienił.
 - **Eksport CSV** (otwiera się w Excelu) i **kopia JSON**, plus import JSON.
 - Działa na telefonie. Karta portu wysuwa się wtedy od dołu.
@@ -263,7 +264,7 @@ Jeśli zacząłeś inwentaryzację w artefakcie w Claude:
 1. W artefakcie kliknij **Kopia JSON** i zapisz plik.
 2. W tej aplikacji kliknij **Import**, wybierz plik i potwierdź.
 
-Format jest ten sam. Urządzenia o tych samych identyfikatorach zostaną nadpisane razem z portami i połączeniami.
+Format jest ten sam. Urządzenia o tych samych identyfikatorach zostaną nadpisane razem z portami i połączeniami. Kopie bez racków (np. z artefaktu albo sprzed wersji z wieloma rackami) trafiają do racka, który jest otwarty w chwili importu. Urządzenia, które już są w bazie, zostają w swoich rackach.
 
 ---
 
@@ -300,9 +301,11 @@ cd /opt/rack-inventory
 bash backup.sh
 git pull
 npm install --omit=dev
-npm run db:init                     # bezpieczne: tworzy tylko brakujące tabele
+npm run db:init                     # bezpieczne: tworzy brakujące tabele i aktualizuje strukturę bazy
 sudo systemctl restart rack-inventory
 ```
+
+Aplikacja przy starcie sama aktualizuje strukturę bazy (`src/migrate.js`), więc `npm run db:init` jest tylko dodatkowym zabezpieczeniem. Przy przejściu na wersję z wieloma rackami wszystkie istniejące urządzenia trafiają do racka „Rack 1”. Jego nazwę zmienisz w aplikacji (✎ obok listy racków).
 
 ---
 
@@ -324,7 +327,8 @@ Etykiety portów: patchpanele `A1…A24`, `B1…`, switche `PKN01:1…PKN01:52` 
 
 Tabele (`sql/schema.sql`):
 
-- `devices`: urządzenia w szafie (typ, liczba portów RJ45 i SFP, stan, model, kolejność).
+- `racks`: szafy (nazwa, lokalizacja, notatki, kolejność na liście).
+- `devices`: urządzenia w szafie (rack, typ, liczba portów RJ45 i SFP, stan, model, kolejność w racku).
 - `ports`: tylko porty, które zostały opisane. Połączenie to `link_device` + `link_port`, zawsze zapisywane po obu stronach.
 - `port_history`: stan przed i po każdej zmianie portu, z autorem i czasem.
 
@@ -333,18 +337,23 @@ API (JSON):
 | Metoda | Adres | Opis |
 |---|---|---|
 | GET | `/api/health` | Test połączenia z bazą |
-| GET | `/api/state` | Cały stan: urządzenia z portami |
-| POST | `/api/seed` | Wczytuje układ racka (tylko gdy pusto) |
-| POST | `/api/devices` | Dodaje urządzenie |
-| PUT | `/api/devices/:id` | Edytuje urządzenie |
+| GET | `/api/state` | Cały stan: `racks` i `devices` z portami |
+| GET | `/api/session` | Czy logowanie jest włączone i kto jest zalogowany |
+| POST | `/api/seed` | Wczytuje układ z inwentaryzacji do `{rack}` (tylko gdy baza jest pusta) |
+| POST | `/api/racks` | Dodaje rack `{name, location, notes}` |
+| PUT | `/api/racks/:id` | Edytuje rack |
+| DELETE | `/api/racks/:id` | Usuwa pusty rack (ostatni zostaje zawsze) |
+| POST | `/api/racks/reorder` | `{ids:[…]}` – kolejność racków na liście |
+| POST | `/api/devices` | Dodaje urządzenie (`rack` – do którego racka) |
+| PUT | `/api/devices/:id` | Edytuje urządzenie; `rack` przenosi je do innego racka |
 | DELETE | `/api/devices/:id` | Usuwa urządzenie, rozłącza patchcordy do niego |
-| POST | `/api/devices/reorder` | `{ids:[…]}` – nowa kolejność w szafie |
+| POST | `/api/devices/reorder` | `{ids:[…]}` – nowa kolejność urządzeń w racku |
 | PUT | `/api/ports/:dev/:n` | Zapis portu (z połączeniem po obu stronach). Opcjonalne `baseRev` (pole `rev` z `/api/state`): jeśli port zmienił się w międzyczasie, odpowiedź to 409 |
 | POST | `/api/ports/bulk` | `{dev, ports:[…], status}` lub `{…, verified:true}` |
 | GET | `/api/ports/:dev/:n/history` | 30 ostatnich zmian portu |
 | GET | `/api/export.csv` | Eksport do Excela (średnik, UTF-8 z BOM) |
 | GET | `/api/export.json` | Pełna kopia JSON |
-| POST | `/api/import` | Import kopii JSON |
+| POST | `/api/import` | Import kopii JSON `{racks, devices, rack}` (`rack` – dokąd trafiają urządzenia bez racka) |
 
 Przykład zapisu portu z terminala:
 

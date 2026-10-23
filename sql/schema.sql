@@ -1,8 +1,22 @@
 -- Rack Inventory · schemat bazy (MySQL 8 / MariaDB 10.5+)
 -- Skrypt jest idempotentny: można go uruchamiać wielokrotnie.
 
+CREATE TABLE IF NOT EXISTS racks (
+  id          VARCHAR(64)  NOT NULL,
+  name        VARCHAR(120) NOT NULL,
+  location    VARCHAR(255) NOT NULL DEFAULT '',
+  notes       TEXT NULL,
+  sort_order  INT NOT NULL DEFAULT 0,
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_order (sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Starsze bazy (bez kolumny rack_id) uzupełnia src/migrate.js przy starcie aplikacji.
 CREATE TABLE IF NOT EXISTS devices (
   id          VARCHAR(64)  NOT NULL,
+  rack_id     VARCHAR(64)  NOT NULL,
   name        VARCHAR(120) NOT NULL,
   short       VARCHAR(32)  NOT NULL,
   kind        ENUM('patch','switch','fiber','other') NOT NULL DEFAULT 'patch',
@@ -15,7 +29,9 @@ CREATE TABLE IF NOT EXISTS devices (
   created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_order (sort_order)
+  KEY idx_order (sort_order),
+  KEY idx_rack (rack_id, sort_order),
+  CONSTRAINT fk_devices_rack FOREIGN KEY (rack_id) REFERENCES racks (id) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS ports (

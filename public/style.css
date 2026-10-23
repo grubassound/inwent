@@ -47,7 +47,8 @@ button,input,select,textarea{font:inherit;color:inherit}
   box-shadow:inset 0 1px 0 var(--stroke-hi),var(--shadow)}
 .mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 .eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
-.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--stroke);background:var(--glass-2);border-radius:999px;padding:7px 14px;cursor:pointer;font-weight:500;font-size:13px;white-space:nowrap}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--stroke);background:var(--glass-2);border-radius:999px;padding:7px 14px;cursor:pointer;font-weight:500;font-size:13px;white-space:nowrap;color:inherit;text-decoration:none}
+.btn.icon{width:30px;height:30px;padding:0;justify-content:center;font-size:15px;flex:none}
 .btn:hover{background:var(--glass-3)}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
 .btn.danger{color:var(--danger)}
@@ -87,7 +88,13 @@ button,input,select,textarea{font:inherit;color:inherit}
 
 /* Rack column */
 .rack{padding:12px;position:sticky;top:12px}
-.rack-head{display:flex;justify-content:space-between;align-items:center;padding:2px 4px 10px}
+.rack-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:2px 4px 10px}
+.rack-head .eyebrow{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rack-switch{display:grid;gap:6px;padding:2px 4px 12px;margin-bottom:10px;border-bottom:1px solid var(--stroke)}
+.rack-switch-row{display:flex;gap:6px;align-items:center}
+.rack-switch select{flex:1;min-width:0;font-weight:600;height:32px;padding:4px 8px}
+.rack-switch .dialog{margin-top:6px;padding:12px}
+.rack-switch .dialog .form{margin-top:10px}
 .rack-list{display:flex;flex-direction:column;gap:4px;margin:0;padding:0;list-style:none}
 .ru{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;align-items:center;width:100%;text-align:left;padding:7px 9px;border-radius:12px;border:1px solid transparent;background:transparent;cursor:pointer}
 .ru:hover{background:var(--glass-2)}
@@ -102,7 +109,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 @media (max-width:780px){
   .rack{position:static;padding:10px}
   .rack-list{flex-direction:row;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x proximity}
-  .ru{flex:0 0 168px;scroll-snap-align:start}
+  .rack-list > li{flex:0 0 168px;scroll-snap-align:start}
 }
 
 /* Device */

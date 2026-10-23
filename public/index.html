@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -31,7 +32,16 @@
 
 <main class="app">
   <nav class="rack glass" aria-label="Urządzenia w racku">
-    <div class="rack-head"><span class="eyebrow">Szafa · od góry</span><button class="btn small" id="btnAddDev">+ Urządzenie</button></div>
+    <div class="rack-switch">
+      <label class="eyebrow" for="rackSel">Rack</label>
+      <div class="rack-switch-row">
+        <select id="rackSel" aria-label="Wybierz rack"></select>
+        <button class="btn small icon" data-act="rackEdit" title="Edytuj rack" aria-label="Edytuj rack">✎</button>
+        <button class="btn small icon" data-act="rackNew" title="Dodaj rack" aria-label="Dodaj rack">+</button>
+      </div>
+      <div id="rackForm"></div>
+    </div>
+    <div class="rack-head"><span class="eyebrow" id="rackHead">Szafa · od góry</span><button class="btn small" id="btnAddDev">+ Urządzenie</button></div>
     <ul class="rack-list" id="rackList"></ul>
   </nav>
   <section class="device glass" id="device"></section>

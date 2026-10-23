@@ -7,6 +7,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const mysql = require('mysql2/promise');
+const { migrate } = require('../src/migrate');
 
 const DB = {
   host: process.env.TEST_DB_HOST || '127.0.0.1',
@@ -71,7 +72,7 @@ after(async () => {
 });
 beforeEach(async () => {
   if (skip) return;
-  await conn.query('DELETE FROM ports; DELETE FROM port_history; DELETE FROM devices;');
+  await conn.query('DELETE FROM ports; DELETE FROM port_history; DELETE FROM devices; DELETE FROM racks;');
 });
 
 it('patchcord zapisuje się po obu stronach, a przepięcie zwalnia stary koniec', async () => {
@@ -219,6 +220,69 @@ it('błąd serwera nie ujawnia szczegółów bazy', async () => {
   } finally {
     await conn.query('RENAME TABLE port_history_tmp TO port_history');
   }
+});
+
+it('migracja: baza sprzed wielu racków dostaje rack-1 z wszystkimi urządzeniami', async () => {
+  await conn.query('DROP TABLE ports; DROP TABLE port_history; DROP TABLE devices; DROP TABLE racks;');
+  await conn.query(`CREATE TABLE devices (id VARCHAR(64) NOT NULL, name VARCHAR(120) NOT NULL, short VARCHAR(32) NOT NULL,
+      kind ENUM('patch','switch','fiber','other') NOT NULL DEFAULT 'patch', port_count SMALLINT UNSIGNED NOT NULL DEFAULT 24,
+      sfp TINYINT UNSIGNED NOT NULL DEFAULT 0, status ENUM('active','unused','remove') NOT NULL DEFAULT 'active',
+      model VARCHAR(120) NOT NULL DEFAULT '', notes TEXT NULL, sort_order INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id), KEY idx_order (sort_order)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    INSERT INTO devices (id,name,short,sort_order) VALUES ('pp-a','Patchpanel A','A',10), ('pp-b','Patchpanel B','B',20);`);
+  await migrate(conn);
+  await migrate(conn); // drugi raz nic nie zmienia
+  const [rows] = await conn.query('SELECT id, rack_id FROM devices ORDER BY id');
+  assert.deepEqual(rows.map((r) => r.rack_id), ['rack-1', 'rack-1']);
+  const s = (await api('GET', '/api/state')).data;
+  assert.deepEqual(Object.keys(s.racks), ['rack-1']);
+  assert.equal(s.devices['pp-a'].rack, 'rack-1');
+  assert.equal((await api('PUT', '/api/ports/pp-a/1', { status: 'used', link: { dev: 'pp-b', port: '1' } })).status, 200);
+});
+
+it('racki: dodawanie, przenoszenie urządzeń, patchcord między rackami, usuwanie', async () => {
+  const first = await addDevice({ name: 'A', short: 'A' });
+  const r1 = (await state())[first].rack;
+  const r = await api('POST', '/api/racks', { name: 'Serwerownia', location: 'Budynek B' });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.id, 'serwerownia');
+  assert.equal(r.data.racks.serwerownia.location, 'Budynek B');
+
+  const sw = (await api('POST', '/api/devices', { name: 'Core', short: 'CORE', kind: 'switch', portCount: 24, rack: 'serwerownia' })).data.id;
+  assert.equal((await state())[sw].rack, 'serwerownia');
+  assert.equal((await api('POST', '/api/devices', { name: 'X', rack: 'nie-ma' })).status, 404);
+
+  // patchcord między rackami
+  await api('PUT', `/api/ports/${first}/1`, { status: 'used', link: { dev: sw, port: '1' } });
+  assert.deepEqual((await port(sw, 1)).link, { dev: first, port: '1' });
+
+  assert.equal((await api('DELETE', '/api/racks/serwerownia')).status, 409, 'rack z urządzeniami');
+  await api('PUT', `/api/devices/${sw}`, { rack: r1 });
+  const s = await state();
+  assert.equal(s[sw].rack, r1);
+  assert.ok(s[sw].order > s[first].order, 'przeniesione urządzenie na koniec racka');
+  assert.deepEqual(s[sw].ports[1].link, { dev: first, port: '1' }, 'patchcordy zostają');
+
+  assert.equal((await api('DELETE', '/api/racks/serwerownia')).status, 200);
+  assert.equal((await api('DELETE', `/api/racks/${r1}`)).status, 409, 'ostatni rack zostaje');
+});
+
+it('import: kopia z rackami i stara kopia bez racków', async () => {
+  const target = (await api('POST', '/api/racks', { name: 'Docelowy' })).data.id;
+  const r = await api('POST', '/api/import', {
+    racks: { 'r-a': { name: 'Rack A', order: 10 } },
+    devices: { x: { name: 'X', short: 'X', rack: 'r-a', ports: {} }, y: { name: 'Y', short: 'Y', ports: {} } },
+    rack: target,
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.devices.x.rack, 'r-a');
+  assert.equal(r.data.devices.y.rack, target, 'bez racka → rack wskazany przy imporcie');
+
+  const exp = (await api('GET', '/api/export.json')).data;
+  assert.equal(exp.racks['r-a'].name, 'Rack A');
+  const { data: csv } = await api('GET', '/api/export.csv');
+  assert.match(csv.split('\r\n')[0], /^\uFEFF?Rack;Urządzenie;Port/);
 });
 
 it('logowanie przez stronę: przekierowania, sesja w ciasteczku, wylogowanie', async () => {

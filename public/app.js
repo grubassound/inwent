@@ -16,8 +16,9 @@ const COLORS = [
 ];
 const colorHex = n => (COLORS.find(c=>c[0]===n)||[])[1];
 
+let racks = {};
 let devices = {};
-let sel = {dev:null, port:null};
+let sel = {rack:null, dev:null, port:null};
 let loaded = false, online = true, busy = false;
 let bulk = {on:false, set:new Set()};
 let searchQ = '';
@@ -26,6 +27,8 @@ let devDraft = null;         // wartości wpisane w formularzu urządzenia (prze
 let pendingImport = null;
 let confirmDelete = false;
 let history = null;          // {key, rows}
+let rackForm = null;         // null | 'new' | 'edit'
+let rackDelConfirm = false;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -55,8 +58,18 @@ function sessionExpired(){
 }
 function applyState(s){
   if (!s || !s.devices) return;
-  devices = s.devices; loaded = true; online = true;
-  if (!sel.dev || !devices[sel.dev]) { sel.dev = sortedIds()[0] || null; sel.port = null; }
+  devices = s.devices; racks = s.racks || {}; loaded = true; online = true;
+  if (!sel.rack || !racks[sel.rack]) { const saved = loadPref(); sel.rack = racks[saved] ? saved : rackIds()[0] || null; }
+  if (!sel.dev || !devices[sel.dev] || devices[sel.dev].rack !== sel.rack) { sel.dev = sortedIds()[0] || null; sel.port = null; }
+}
+// Ostatnio oglądany rack pamiętany w przeglądarce (tylko wygoda, nie dane).
+const PREF_RACK = 'rack-inventory.rack';
+function loadPref(){ try { return localStorage.getItem(PREF_RACK); } catch(e) { return null; } }
+function savePref(id){ try { localStorage.setItem(PREF_RACK, id); } catch(e) {} }
+function setRack(id){
+  sel.rack = id; savePref(id);
+  sel.dev = sortedIds()[0] || null; sel.port = null; draft = null;
+  closeDevForm(); bulk = {on:false, set:new Set()};
 }
 // onError(e) może obsłużyć błąd sam i zwrócić true, żeby nie pokazywać ogólnego komunikatu.
 async function mutate(method, url, body, okMsg, onError){
@@ -84,14 +97,25 @@ async function refresh(full){
 }
 
 /* ---------- helpers ---------- */
-function sortedIds(){ return Object.keys(devices).sort((a,b)=>(devices[a].order??0)-(devices[b].order??0) || a.localeCompare(b)); }
+function rackIds(){ return Object.keys(racks).sort((a,b)=>(racks[a].order??0)-(racks[b].order??0) || a.localeCompare(b)); }
+// Urządzenia jednego racka (domyślnie oglądanego), od góry szafy.
+function sortedIds(rack = sel.rack){
+  return Object.keys(devices).filter(id => devices[id].rack === rack)
+    .sort((a,b)=>(devices[a].order??0)-(devices[b].order??0) || a.localeCompare(b));
+}
+function allIds(){ return rackIds().flatMap(r => sortedIds(r)); }
 function totalPorts(d){ return (d.portCount||0) + (d.sfp||0); }
 function portRec(devId, n){ return (devices[devId]?.ports||{})[String(n)] || {}; }
-function label(devId, n){
+function labelBase(devId, n){
   const d = devices[devId]; if (!d) return '?';
   const s = d.short || d.name;
   if (d.kind === 'patch' || d.kind === 'fiber') return s.length<=2 ? s+n : s+'-'+n;
   return s+':'+n;
+}
+// Port w innym racku dostaje nazwę tamtego racka: „Serwerownia › A5”.
+function label(devId, n){
+  const d = devices[devId], base = labelBase(devId, n);
+  return d && d.rack !== sel.rack && racks[d.rack] ? racks[d.rack].name+' › '+base : base;
 }
 function counts(d){
   const c = {used:0,free:0,unknown:0,reserved:0,broken:0,verified:0,total:totalPorts(d)};
@@ -118,7 +142,7 @@ function render(){ renderHeader(); renderRack(); renderDevice(true); renderEdito
 function renderHeader(){
   $('modeLine').textContent = !loaded ? 'Łączenie z serwerem…' : online ? 'Dane w bazie MySQL · odświeżanie co 20 s' : 'Brak połączenia z serwerem';
   const all = {used:0,free:0,unknown:0,reserved:0,broken:0,verified:0,total:0};
-  Object.values(devices).forEach(d => { const c=counts(d); for (const k in all) all[k]+=c[k]; });
+  sortedIds().forEach(id => { const c=counts(devices[id]); for (const k in all) all[k]+=c[k]; });
   const pct = all.total ? Math.round(all.verified/all.total*100) : 0;
   $('stats').innerHTML =
     `<span class="stat">Porty <b>${all.total}</b></span>` +
@@ -129,6 +153,12 @@ function renderHeader(){
     : (loaded && !online) ? '<div class="banner glass">Serwer nie odpowiada. Zmiany nie zostaną zapisane, dopóki połączenie nie wróci.</div>' : '';
 }
 function renderRack(){
+  const opts = rackIds().map(r=>`<option value="${esc(r)}" ${r===sel.rack?'selected':''}>${esc(racks[r].name)}</option>`).join('');
+  const sw = $('rackSel');
+  if (sw.dataset.html !== opts){ sw.innerHTML = opts; sw.dataset.html = opts; } // nie zamykaj rozwiniętej listy bez potrzeby
+  const rk = racks[sel.rack];
+  $('rackHead').textContent = rk && rk.location ? rk.location : 'Szafa · od góry';
+  $('rackHead').title = $('rackHead').textContent;
   const ids = sortedIds();
   $('rackList').innerHTML = ids.length ? ids.map((id,i) => {
     const d = devices[id], c = counts(d), t = c.total||1;
@@ -139,10 +169,29 @@ function renderRack(){
     </button></li>`;
   }).join('') : '<li class="empty" style="padding:12px;text-align:left">Brak urządzeń</li>';
 }
+// Formularz racka rysowany tylko na żądanie, żeby odświeżanie w tle nie kasowało wpisywanego tekstu.
+function renderRackForm(focus){
+  const el = $('rackForm');
+  if (!rackForm){ el.innerHTML = ''; return; }
+  const edit = rackForm === 'edit', r = edit ? racks[sel.rack] || {} : {name:'', location:'', notes:''};
+  const n = edit ? sortedIds().length : 0, i = rackIds().indexOf(sel.rack);
+  const del = !edit ? '' : n ? `<span class="hint">Usunąć można tylko pusty rack</span>`
+    : rackIds().length < 2 ? '' : rackDelConfirm ? `<button class="btn small danger" data-act="rackDelYes">Usuń na pewno</button>`
+    : `<button class="btn small danger" data-act="rackDel">Usuń rack</button>`;
+  el.innerHTML = `<div class="dialog"><div class="eyebrow">${edit?'Edycja racka':'Nowy rack'}</div><div class="form">
+    <div class="field"><label for="r_name">Nazwa</label><input id="r_name" type="text" value="${esc(r.name)}" placeholder="np. Serwerownia"></div>
+    <div class="field"><label for="r_loc">Lokalizacja</label><input id="r_loc" type="text" value="${esc(r.location)}" placeholder="np. budynek B, pokój 0.14"></div>
+    <div class="field"><label for="r_notes">Notatki</label><textarea id="r_notes">${esc(r.notes)}</textarea></div>
+    <div class="actions"><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary small" data-act="rackSave">Zapisz</button><button class="btn small" data-act="rackCancel">Anuluj</button></div>
+      ${edit && rackIds().length > 1 ? `<div style="display:flex;gap:6px"><button class="btn small" data-act="rackUp" ${i<=0?'disabled':''} aria-label="Wyżej na liście">▲</button><button class="btn small" data-act="rackDown" ${i>=rackIds().length-1?'disabled':''} aria-label="Niżej na liście">▼</button></div>` : ''}
+    </div>${del?`<div>${del}</div>`:''}
+  </div></div>`;
+  if (focus) $('r_name').focus();
+}
 function isHit(id,n){
   if (!searchQ) return false;
   const r = portRec(id,n);
-  return [label(id,n), r.dest, r.endpoint, r.vlan, r.cord, r.notes, r.plan, r.color].join(' ').toLowerCase().includes(searchQ);
+  return [labelBase(id,n), r.dest, r.endpoint, r.vlan, r.cord, r.notes, r.plan, r.color].join(' ').toLowerCase().includes(searchQ);
 }
 function portBtn(id, n){
   const r = portRec(id,n), st = r.status||'unknown';
@@ -175,11 +224,13 @@ function portsMarkup(id){
   return groups.join('');
 }
 function deviceForm(d){
-  d = d || {name:'',short:'',kind:'patch',portCount:24,sfp:0,status:'active',model:'',notes:''};
+  d = d || {name:'',short:'',kind:'patch',portCount:24,sfp:0,status:'active',model:'',notes:'',rack:sel.rack};
+  const rackField = rackIds().length > 1 ? `<div class="field"><label for="f_rack">Rack</label><select id="f_rack">${rackIds().map(r=>`<option value="${esc(r)}" ${(d.rack||sel.rack)===r?'selected':''}>${esc(racks[r].name)}</option>`).join('')}</select></div>` : '';
   return `<div class="dialog" data-form="${devForm}"><div class="eyebrow">${devForm==='new'?'Nowe urządzenie':'Edycja urządzenia'}</div>
   <div class="form">
     <div class="row2"><div class="field"><label for="f_name">Nazwa</label><input id="f_name" type="text" value="${esc(d.name)}"></div>
     <div class="field"><label for="f_short">Prefiks etykiet</label><input id="f_short" type="text" value="${esc(d.short)}" placeholder="np. B lub PKN01"></div></div>
+    ${rackField}
     <div class="row2"><div class="field"><label for="f_kind">Typ</label><select id="f_kind">${Object.entries(KINDS).map(([k,v])=>`<option value="${k}" ${d.kind===k?'selected':''}>${v}</option>`).join('')}</select></div>
     <div class="field"><label for="f_status">Stan</label><select id="f_status">${Object.entries(DEVSTATUS).map(([k,v])=>`<option value="${k}" ${d.status===k?'selected':''}>${v}</option>`).join('')}</select></div></div>
     <div class="row2"><div class="field"><label for="f_ports">Porty RJ45 / LC</label><input id="f_ports" type="number" min="1" max="96" value="${Number.isFinite(d.portCount)?d.portCount:''}"></div>
@@ -203,6 +254,11 @@ function renderDevice(force){
   if (!loaded){ el.innerHTML = '<div class="empty">Wczytywanie racka…</div>'; return; }
   if (devForm==='new'){ el.innerHTML = deviceForm(devDraft); return; }
   const id = sel.dev, d = devices[id];
+  if (!d && Object.keys(devices).length){
+    el.innerHTML = `<div class="empty"><h3>Ten rack jest pusty</h3><p>Dodaj urządzenia albo przenieś je z innego racka (Edytuj urządzenie → Rack).</p>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-act="newDev">Dodaj urządzenie</button></div></div>`;
+    return;
+  }
   if (!d){
     el.innerHTML = `<div class="empty"><h3>Rack jest pusty</h3><p>Wczytaj układ z inwentaryzacji (patchpanele A–H, switche PKN01–04, CAM patch, HPSW34, dwa żółte switche) albo dodaj urządzenia ręcznie.</p>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-act="loadTemplate">Wczytaj układ racka</button><button class="btn" data-act="newDev">Dodaj urządzenie</button></div></div>`;
@@ -266,6 +322,13 @@ function renderEditor(){
     }
   }
   const hist = history && history.key===key ? history.rows : null;
+  // Urządzenia do patchcorda: najpierw ten rack, potem pozostałe (w grupach).
+  const devOpt = o => `<option value="${esc(o)}" ${linkDev===o?'selected':''}>${esc(devices[o].name)}</option>`;
+  const otherRacks = rackIds().filter(rk => rk !== sel.rack && sortedIds(rk).length);
+  const ldevOpts = otherRacks.length
+    ? `<optgroup label="${esc(racks[sel.rack]?.name||'Ten rack')}">${sortedIds().map(devOpt).join('')}</optgroup>`
+      + otherRacks.map(rk => `<optgroup label="${esc(racks[rk].name)}">${sortedIds(rk).map(devOpt).join('')}</optgroup>`).join('')
+    : sortedIds().map(devOpt).join('');
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
       <div><div class="eyebrow">${esc(devices[id].name)} · port ${n}</div><h3>${esc(label(id,n))}</h3></div>
@@ -275,10 +338,10 @@ function renderEditor(){
     ${r._conflict?`<div class="conflict">Ktoś inny zmienił ten port, kiedy go edytowałeś. Teraz w bazie: <b>${esc(summ(portRec(id,n))||'pusty port')}</b>. Poniżej są Twoje zmiany. Kliknij Zapisz, żeby je zachować zamiast tamtych.</div>`:''}
     <div class="form">
       <div class="field"><label>Status portu</label><div class="seg">${Object.entries(STATUS).map(([k,v])=>`<button type="button" data-st="${k}" aria-pressed="${r.status===k}"><i class="dot" style="background:var(${v.v})"></i>${v.l}</button>`).join('')}</div></div>
-      <div class="field"><label for="e_ldev">Patchcord w racku — drugi koniec</label>
-        <div class="row2"><select id="e_ldev"><option value="">— brak —</option>${sortedIds().map(o=>`<option value="${esc(o)}" ${linkDev===o?'selected':''}>${esc(devices[o].name)}</option>`).join('')}</select>
+      <div class="field"><label for="e_ldev">Patchcord — drugi koniec</label>
+        <div class="row2"><select id="e_ldev"><option value="">— brak —</option>${ldevOpts}</select>
         <select id="e_lport" ${linkDev?'':'disabled'}><option value="">— port —</option>${portOpts}</select></div>
-        <span class="hint">Połączenie zapisuje się po obu stronach.</span></div>
+        <span class="hint">Połączenie zapisuje się po obu stronach${otherRacks.length?'. Może prowadzić też do innego racka':''}.</span></div>
       <div class="field"><label for="e_dest">Dokąd prowadzi (lokalizacja / gniazdo)</label><input id="e_dest" type="text" value="${esc(r.dest)}" placeholder="np. Biuro 1.12, gniazdo 1.12-03"></div>
       <div class="row2"><div class="field"><label for="e_end">Urządzenie końcowe</label><input id="e_end" type="text" value="${esc(r.endpoint)}" placeholder="PC, drukarka, AP, kamera"></div>
       <div class="field"><label for="e_vlan">VLAN</label><input id="e_vlan" type="text" value="${esc(r.vlan)}" placeholder="np. 10"></div></div>
@@ -311,7 +374,7 @@ function renderResults(){
   const el = $('results');
   if (!searchQ){ el.hidden = true; return; }
   const hits = [];
-  sortedIds().forEach(id => { for (let n=1;n<=totalPorts(devices[id]);n++) if (isHit(id,n)) hits.push([id,n]); });
+  allIds().forEach(id => { for (let n=1;n<=totalPorts(devices[id]);n++) if (isHit(id,n)) hits.push([id,n]); });
   el.hidden = false;
   el.innerHTML = `<div class="eyebrow">Wyniki: ${hits.length}</div>` + (hits.length ? `<ul>${hits.slice(0,60).map(([id,n])=>{ const r=portRec(id,n);
     return `<li><button data-goto="${esc(id)}#${n}"><span class="mono"><b>${esc(label(id,n))}</b></span><span>${esc([STATUS[r.status||'unknown'].l, r.dest, r.endpoint, r.vlan&&('VLAN '+r.vlan), r.link&&devices[r.link.dev]&&('⇄ '+label(r.link.dev,r.link.port))].filter(Boolean).join(' · '))}</span></button></li>`; }).join('')}</ul>` : '<p class="hint" style="margin:6px 0 0">Nic nie pasuje.</p>');
@@ -367,7 +430,8 @@ function devFromForm(){
   return {
     name: $('f_name').value.trim(), short: $('f_short').value.trim(), kind: $('f_kind').value, status: $('f_status').value,
     portCount: parseInt($('f_ports').value,10), sfp: parseInt($('f_sfp').value,10)||0,
-    model: $('f_model').value.trim(), notes: $('f_dnotes').value
+    model: $('f_model').value.trim(), notes: $('f_dnotes').value,
+    rack: $('f_rack') ? $('f_rack').value : (devForm==='edit' && devices[sel.dev] ? devices[sel.dev].rack : sel.rack)
   };
 }
 
@@ -380,7 +444,9 @@ document.addEventListener('click', async e => {
   }
   if (t.dataset.goto){
     const [id,n] = t.dataset.goto.split('#');
+    if (!devices[id]) return;
     if ((id!==sel.dev || Number(n)!==sel.port) && !canLeavePort()) return;
+    if (devices[id].rack !== sel.rack){ rackForm = null; renderRackForm(); setRack(devices[id].rack); }
     sel.dev=id; sel.port=Number(n); draft=null; closeDevForm(); render(); return;
   }
   if (t.dataset.port !== undefined && t.closest('#device')){
@@ -410,12 +476,12 @@ document.addEventListener('click', async e => {
       try { history = {key: sel.dev+'#'+sel.port, rows: await api('GET', `api/ports/${encodeURIComponent(sel.dev)}/${sel.port}/history`)}; readDraft(); renderEditor(); }
       catch(err){ toast('Nie udało się pobrać historii'); }
       break;
-    case 'loadTemplate': if (await mutate('POST','api/seed',{},'Wczytano układ racka')) { sel.dev = sortedIds()[0]; render(); } break;
+    case 'loadTemplate': if (await mutate('POST','api/seed',{rack: sel.rack},'Wczytano układ racka')) { sel.dev = sortedIds()[0]; render(); } break;
     case 'newDev': if (canLeavePort()) { openDevForm('new'); render(); } break;
     case 'editDev': if (devForm==='edit') closeDevForm(); else openDevForm('edit'); renderDevice(true); break;
     case 'devCancel': closeDevForm(); renderDevice(true); break;
     case 'devSave': {
-      const body = devFromForm();
+      const body = devFromForm(), editedId = devForm==='edit' ? sel.dev : null;
       if (devForm==='edit'){
         // Zmniejszenie liczby portów kasuje opis portów spoza nowego zakresu, więc najpierw pytamy.
         const d = devices[sel.dev];
@@ -426,7 +492,14 @@ document.addEventListener('click', async e => {
       }
       const s = devForm==='new' ? await mutate('POST','api/devices',body,'Dodano urządzenie') : await mutate('PUT','api/devices/'+encodeURIComponent(sel.dev),body,'Zapisano urządzenie');
       if (s){
-        if (s.id) { sel.dev = s.id; sel.port=null; }
+        if (s.id) {
+          // Nowe urządzenie w innym racku: przełącz na ten rack.
+          if (devices[s.id] && devices[s.id].rack !== sel.rack) setRack(devices[s.id].rack);
+          sel.dev = s.id; sel.port=null;
+        } else if (editedId && devices[editedId] && devices[editedId].rack !== sel.rack) {
+          toast(`Przeniesiono do racka „${racks[devices[editedId].rack]?.name||''}”`);
+          sel.dev = sortedIds()[0]||null; sel.port=null; draft=null;
+        }
         if (sel.port && devices[sel.dev] && sel.port > totalPorts(devices[sel.dev])) { sel.port=null; draft=null; }
         closeDevForm(); render();
       }
@@ -459,9 +532,48 @@ document.addEventListener('click', async e => {
       render(); break;
     }
     case 'importNo': pendingImport=null; renderHeader(); break;
+    case 'rackNew': case 'rackEdit': {
+      const mode = a==='rackNew' ? 'new' : 'edit';
+      rackForm = rackForm===mode ? null : mode; rackDelConfirm = false; renderRackForm(true);
+      break;
+    }
+    case 'rackCancel': rackForm = null; renderRackForm(); break;
+    case 'rackSave': {
+      const body = {name: $('r_name').value.trim(), location: $('r_loc').value.trim(), notes: $('r_notes').value};
+      if (!body.name){ toast('Podaj nazwę racka'); $('r_name').focus(); break; }
+      if (rackForm==='new'){
+        if (!canLeavePort()) break;
+        const s = await mutate('POST','api/racks',body,`Dodano rack „${body.name}”`);
+        if (s){ rackForm = null; setRack(s.id); renderRackForm(); render(); }
+      } else {
+        const s = await mutate('PUT','api/racks/'+encodeURIComponent(sel.rack),body,'Zapisano rack');
+        if (s){ rackForm = null; renderRackForm(); render(); }
+      }
+      break;
+    }
+    case 'rackDel': rackDelConfirm = true; renderRackForm(); break;
+    case 'rackDelYes': {
+      const s = await mutate('DELETE','api/racks/'+encodeURIComponent(sel.rack),null,'Usunięto rack');
+      if (s){ rackForm = null; rackDelConfirm = false; setRack(rackIds()[0]); renderRackForm(); render(); }
+      break;
+    }
+    case 'rackUp': case 'rackDown': {
+      const ids = rackIds(), i = ids.indexOf(sel.rack), j = i + (a==='rackUp'?-1:1);
+      if (j<0 || j>=ids.length) break;
+      [ids[i],ids[j]] = [ids[j],ids[i]];
+      if (await mutate('POST','api/racks/reorder',{ids})){ renderRack(); renderRackForm(); }
+      break;
+    }
   }
 });
 document.addEventListener('change', e => {
+  if (e.target.id==='rackSel'){
+    const v = e.target.value;
+    if (v === sel.rack) return;
+    if (!canLeavePort()){ e.target.value = sel.rack; return; }
+    rackForm = null; renderRackForm(); setRack(v); render();
+    return;
+  }
   if (e.target.id==='e_ldev'){ readDraft(); const v = e.target.value; if (v) draft.link = {dev:v, port:''}; else delete draft.link; renderEditor(); }
   if (e.target.id==='e_lport'){ readDraft(); if (draft.link) draft.link.port = e.target.value; }
 });
@@ -475,8 +587,11 @@ $('importFile').addEventListener('change', e => {
     try{
       const j = JSON.parse(rd.result); const data = j.devices || j;
       if (!data || typeof data!=='object' || Array.isArray(data)) throw 0;
-      pendingImport = {devices: data};
-      $('banner').innerHTML = `<div class="banner glass" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between"><span>Import nadpisze ${Object.keys(data).length} urządzeń o tych samych identyfikatorach razem z ich portami.</span><span style="display:flex;gap:8px"><button class="btn small primary" data-act="importYes">Importuj</button><button class="btn small" data-act="importNo">Anuluj</button></span></div>`;
+      const jr = j.racks && typeof j.racks==='object' ? j.racks : null;
+      pendingImport = {devices: data, racks: jr || undefined, rack: sel.rack};
+      const what = `${Object.keys(data).length} urządzeń${jr?' i '+Object.keys(jr).length+' racków':''}`;
+      const where = jr ? '' : ` Nowe urządzenia trafią do racka „${esc(racks[sel.rack]?.name||'')}”.`;
+      $('banner').innerHTML = `<div class="banner glass" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between"><span>Import nadpisze ${what} o tych samych identyfikatorach razem z portami.${where}</span><span style="display:flex;gap:8px"><button class="btn small primary" data-act="importYes">Importuj</button><button class="btn small" data-act="importNo">Anuluj</button></span></div>`;
     }catch(err){ toast('To nie jest poprawna kopia JSON'); }
     e.target.value = '';
   };
