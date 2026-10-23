@@ -1,0 +1,21 @@
+# Szablon usługi systemd. install.sh generuje go automatycznie z właściwymi ścieżkami.
+# Ręcznie: popraw User, WorkingDirectory i ścieżkę do node, potem:
+#   sudo cp deploy/rack-inventory.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now rack-inventory
+[Unit]
+Description=Rack Inventory (inwentaryzacja szafy sieciowej)
+After=network.target mysql.service mariadb.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/rack-inventory
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+{
+  "name": "rack-inventory",
+  "version": "1.0.0",
+  "description": "Inwentaryzacja szafy sieciowej: porty patchpaneli i switchy, patchcordy, trasy kabli i plan przebudowy. Node.js + MySQL.",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "db:init": "node src/init-db.js",
+    "db:seed": "node src/init-db.js --seed"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mysql2": "^3.11.5"
+  }
+}

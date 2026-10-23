@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0c0f">
+<title>Inwentaryzacja racka</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top glass">
+  <div class="brand">
+    <h1>Inwentaryzacja racka</h1>
+    <p id="modeLine">Łączenie z serwerem…</p>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="tools">
+    <div class="search"><input id="q" type="text" placeholder="Szukaj: pokój, gniazdo, VLAN, B12…" autocomplete="off"></div>
+    <a class="btn" href="api/export.csv">CSV</a>
+    <a class="btn" href="api/export.json">Kopia JSON</a>
+    <label class="btn" for="importFile">Import</label>
+    <input id="importFile" type="file" accept="application/json,.json" hidden>
+  </div>
+</header>
+<div id="banner"></div>
+<section id="results" class="results glass" hidden></section>
+
+<main class="app">
+  <nav class="rack glass" aria-label="Urządzenia w racku">
+    <div class="rack-head"><span class="eyebrow">Szafa · od góry</span><button class="btn small" id="btnAddDev">+ Urządzenie</button></div>
+    <ul class="rack-list" id="rackList"></ul>
+  </nav>
+  <section class="device glass" id="device"></section>
+  <aside class="editor glass" id="editor"></aside>
+</main>
+<div id="toast" class="toast glass" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
