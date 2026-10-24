@@ -303,6 +303,20 @@ it('błędy mają kod do tłumaczenia, eksport CSV w wybranym języku', async ()
   assert.match(pl, /;Zajęty;.*;czerwony;/);
 });
 
+it('za Cloudflare wejście przez http:// przenosi na https://', async () => {
+  const viaHttp = { 'CF-Visitor': '{"scheme":"http"}' };
+  const page = await fetch(base + '/', { headers: viaHttp, redirect: 'manual' });
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /location\.replace\("https:\/\/"\+location\.host\+location\.pathname/);
+  assert.equal(page.headers.get('cache-control'), 'no-store');
+  const login = await fetch(base + '/login', { method: 'POST', headers: { ...viaHttp, 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'user=a&password=b', redirect: 'manual' });
+  assert.equal(login.headers.get('location'), 'login.html');
+  const apiPost = await fetch(base + '/api/racks', { method: 'POST', headers: { ...viaHttp, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal((await apiPost.json()).code, 'https_required');
+  const viaHttps = await fetch(base + '/api/health', { headers: { 'CF-Visitor': '{"scheme":"https"}' } });
+  assert.deepEqual(await viaHttps.json(), { ok: true }, 'przez https bez zmian');
+});
+
 it('logowanie przez stronę: przekierowania, sesja w ciasteczku, wylogowanie', async () => {
   const p = BASE_PORT + 2;
   const authed = startServer(p, { AUTH_USER: 'admin', AUTH_PASSWORD: 'tajne#1', SESSION_SECRET: 'x'.repeat(32) });

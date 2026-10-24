@@ -38,6 +38,21 @@ app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
 app.use(express.json({ limit: '10mb' }));
 
+// Za Cloudflare: gdy odwiedzający wszedł przez http:// (nagłówek CF-Visitor), przenieś go na https://.
+// Cloudflare zawsze obsługuje HTTPS, a bez tego przeglądarka odrzuca ciasteczko sesji z flagą Secure
+// i logowanie wraca na stronę logowania. Przekierowanie robi przeglądarka, bo tylko ona zna pełną
+// ścieżkę (także z podkatalogiem, np. /rack/ za Apache).
+const HTTPS_REDIRECT_PAGE = '<!doctype html><meta charset="utf-8"><title>HTTPS</title>'
+  + '<script>location.replace("https://"+location.host+location.pathname+location.search+location.hash)</script>'
+  + '<p><a id="h" href="#">HTTPS</a></p><script>document.getElementById("h").href="https://"+location.host+location.pathname</script>';
+app.use((req, res, next) => {
+  if (!/"scheme"\s*:\s*"http"/.test(req.headers['cf-visitor'] || '')) return next();
+  res.set('Cache-Control', 'no-store');
+  if (req.method === 'GET' || req.method === 'HEAD') return res.type('html').send(HTTPS_REDIRECT_PAGE);
+  if (req.path === '/login') return res.redirect(303, 'login.html');
+  res.status(400).json({ error: 'Otwórz aplikację przez https://', code: 'https_required' });
+});
+
 /* ---------- opcjonalne logowanie: strona logowania + sesja w podpisanym ciasteczku ---------- */
 const AUTH_ON = Boolean(AUTH_USER && AUTH_PASSWORD);
 const AUTH_MAX_FAILS = 10;
