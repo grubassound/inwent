@@ -4,6 +4,7 @@
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/grubassound/inwent/main/proxmox/ct-install.sh)"
 # Zmienne (opcjonalne): AUTH_USER, AUTH_PASSWORD, BRANCH, REPO
 set -Eeuo pipefail
+umask 022   # pliki aplikacji muszą być czytelne dla użytkownika usługi, niezależnie od ustawień powłoki
 
 REPO="${REPO:-https://github.com/grubassound/inwent.git}"
 BRANCH="${BRANCH:-main}"
@@ -66,6 +67,7 @@ else
 fi
 cd "$APP_DIR"
 npm ci --omit=dev --no-audit --no-fund --loglevel=error >/dev/null
+find "$APP_DIR" -path "$APP_DIR/.env" -prune -o -path "$APP_DIR/backups" -prune -o -exec chmod go+rX {} +
 msg_ok "Aplikacja w $APP_DIR ($(git rev-parse --short HEAD))"
 
 msg_info "Konfiguracja (.env)"
@@ -163,48 +165,8 @@ cat > /etc/cron.d/rack-inventory <<'CRON'
 # Codzienna kopia bazy Rack Inventory (30 ostatnich w /opt/rack-inventory/backups)
 15 2 * * * root bash /opt/rack-inventory/backup.sh >/dev/null 2>&1
 CRON
-cat > /usr/local/bin/rack-inventory <<'CLI'
-#!/usr/bin/env bash
-# Zarządzanie Rack Inventory w kontenerze: rack-inventory {update|passwd|backup|status}
-set -euo pipefail
-umask 077
-APP_DIR=/opt/rack-inventory
-[[ $EUID -eq 0 ]] || { echo "Uruchom jako root."; exit 1; }
-case "${1:-}" in
-  update)
-    bash "$APP_DIR/backup.sh"
-    git -C "$APP_DIR" pull -q --ff-only
-    (cd "$APP_DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error >/dev/null)
-    systemctl restart rack-inventory
-    echo "Zaktualizowano do $(git -C "$APP_DIR" rev-parse --short HEAD)." ;;
-  passwd)
-    read -r -p "Login [$(sed -n "s/^AUTH_USER='\(.*\)'$/\1/p" "$APP_DIR/.env")]: " U
-    while :; do
-      read -r -s -p "Nowe hasło: " P1; echo; read -r -s -p "Powtórz hasło: " P2; echo
-      [[ "$P1" == "$P2" ]] || { echo "Hasła się różnią."; continue; }
-      [[ ${#P1} -ge 8 ]] || { echo "Hasło musi mieć co najmniej 8 znaków."; continue; }
-      [[ "$P1" != *"'"* ]] || { echo "Hasło nie może zawierać apostrofu."; continue; }
-      break
-    done
-    [[ "$U" != *"'"* ]] || { echo "Login nie może zawierać apostrofu."; exit 1; }
-    # Nowe wartości idą przez zmienne środowiskowe, więc znaki specjalne w haśle niczego nie psują.
-    NEW_USER="$U" NEW_PASS="$P1" awk 'BEGIN{q="\047"}
-      /^AUTH_USER=/ && ENVIRON["NEW_USER"] != "" {print "AUTH_USER=" q ENVIRON["NEW_USER"] q; next}
-      /^AUTH_PASSWORD=/ {print "AUTH_PASSWORD=" q ENVIRON["NEW_PASS"] q; next}
-      {print}' "$APP_DIR/.env" > "$APP_DIR/.env.tmp"
-    cat "$APP_DIR/.env.tmp" > "$APP_DIR/.env"   # cat zachowuje właściciela i uprawnienia 600
-    rm -f "$APP_DIR/.env.tmp"
-    systemctl restart rack-inventory
-    echo "Hasło zmienione. Wszyscy zostali wylogowani." ;;
-  backup) bash "$APP_DIR/backup.sh" ;;
-  status)
-    systemctl --no-pager status rack-inventory | head -5
-    echo "Adres: https://$(hostname -I | awk '{print $1}')/" ;;
-  *) echo "Użycie: rack-inventory {update|passwd|backup|status}"; exit 1 ;;
-esac
-CLI
-chmod 755 /usr/local/bin/rack-inventory
-msg_ok "Kopia codziennie o 2:15, polecenie: rack-inventory {update|passwd|backup|status}"
+install -m 755 "$APP_DIR/proxmox/rack-inventory-cli.sh" /usr/local/bin/rack-inventory
+msg_ok "Kopia codziennie o 2:15, polecenie: rack-inventory {update|passwd|backup|status|repair}"
 
 msg_info "Sprawdzenie działania"
 for _ in $(seq 30); do

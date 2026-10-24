@@ -68,7 +68,10 @@ else
   RAM="$(ask "Pamięć" "RAM w MB:" "$RAM")" || cancel
   BRG="$(ask "Sieć" "Mostek sieciowy:" "$BRG")" || cancel
   NET="$(ask "Adres IP" "dhcp albo stały adres z maską, np. 192.168.1.50/24:" "$NET")" || cancel
-  if [[ "$NET" != dhcp ]]; then GATE="$(ask "Brama" "Adres bramy, np. 192.168.1.1:" "")" || cancel; fi
+  if [[ "$NET" != dhcp ]]; then
+    GATE="$(ask "Brama" "Adres bramy (wymagany przy stałym IP), np. 192.168.1.1:" "")" || cancel
+    [[ "$GATE" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { msg_err "Przy stałym adresie IP podaj bramę, inaczej kontener nie będzie miał internetu."; exit 1; }
+  fi
   VLAN="$(ask "VLAN" "Tag VLAN (puste = bez VLAN):" "")" || cancel
   AUTH_USER="$(ask "Logowanie" "Login do aplikacji:" "$AUTH_USER")" || cancel
   AUTH_PASSWORD="$(whiptail "${WT[@]}" --title "Logowanie" --passwordbox "Hasło do aplikacji (min. 8 znaków, Enter = adminadmin):" 10 64 3>&1 1>&2 2>&3)" || cancel

@@ -42,7 +42,15 @@ Polecenia w kontenerze:
 | `rack-inventory update` | Kopia bazy, pobranie nowej wersji z GitHuba, restart |
 | `rack-inventory passwd` | Zmiana loginu i hasła (wylogowuje wszystkich) |
 | `rack-inventory backup` | Kopia bazy teraz (do `/opt/rack-inventory/backups`) |
-| `rack-inventory status` | Stan usługi i adres aplikacji |
+| `rack-inventory status` | Stan usługi, wersja i adres aplikacji |
+| `rack-inventory repair` | Naprawa uprawnień plików i restart (gdy po aktualizacji strona pokazuje błąd 503) |
+
+`update` najpierw sprawdza połączenie z GitHubem. Gdy kontener nie ma bramy albo DNS, przerywa i podpowiada, co poprawić w Proxmoxie. Aktualizuje też samo polecenie `rack-inventory`.
+
+> **Kontenery zainstalowane przed 24.10.2026:** stare polecenie `rack-inventory update` zapisywało pliki z uprawnieniami, przez które aplikacja nie startowała (błąd 503). Jednorazowo podmień je na nowe, w konsoli kontenera jako root:
+> ```bash
+> cd /opt/rack-inventory && git pull -q --ff-only && install -m 755 proxmox/rack-inventory-cli.sh /usr/local/bin/rack-inventory && rack-inventory update
+> ```
 
 Z węzła Proxmox wywołasz je bez wchodzenia do kontenera, np. `pct exec 105 -- rack-inventory update`.
 
@@ -474,6 +482,8 @@ Urządzenia o tych samych identyfikatorach zostaną nadpisane razem z portami i 
 | „Za dużo nieudanych prób” | Odczekaj 15 minut albo zrestartuj usługę. |
 | Ostrzeżenie o certyfikacie w przeglądarce | Certyfikat self-signed. Zaimportuj go jako zaufany albo użyj Let's Encrypt. |
 | Proxmox: „Kontener nie ma dostępu do internetu” | Kontener nie dostał adresu albo DNS. Sprawdź mostek i DHCP, a przy stałym IP bramę. Potem usuń kontener (`pct stop ID; pct destroy ID`) i uruchom skrypt ponownie. |
+| Proxmox: **503 Service Unavailable** po aktualizacji | Aplikacja nie może odczytać swoich plików. W kontenerze: `rack-inventory repair`. Przy starym poleceniu `rack-inventory` wykonaj jednorazową podmianę z sekcji [Instalacja na Proxmox VE](#instalacja-na-proxmox-ve). |
+| Proxmox: `Could not resolve host: github.com` | Kontener nie ma bramy albo DNS. Sprawdź `pct config <ID>`: przy stałym IP w `net0` musi być `gw=…`. Popraw: `pct set <ID> -net0 …,gw=<brama> -nameserver <DNS>` i `pct reboot <ID>`. |
 | Proxmox: instalacja przerwana błędem | Skrypt zostawia kontener do diagnozy. Logi: `pct enter ID`, potem `journalctl -u rack-inventory`. Instalację w kontenerze można powtórzyć poleceniem z sekcji [Instalacja na Proxmox VE](#instalacja-na-proxmox-ve). |
 
 ---
