@@ -132,6 +132,9 @@ Inne sposoby: [instalator `install.sh`](#szybka-instalacja) na dowolnym serwerze
 - **Przybliżanie panelu:** przyciski **−**, **+** i **Dopasuj**, a także **Ctrl + kółko myszy** albo gest szczypania na touchpadzie. Powiększenie zostaje zapamiętane.
 - **Szablony modeli Aruba** (2530, 2540, 2930F, CX 6100, Instant On 1930) w formularzu urządzenia. Szablon wypełnia model oraz liczbę portów i modułów SFP.
 - **Patchpanele i panele światłowodowe** mają porty w modułach po 6.
+- **Grafika szafy** w lewej kolumnie: realistyczny widok całej szafy z urządzeniami, portami w kolorach kabli i migającymi diodami. Kliknięcie urządzenia je otwiera. Przełącznik **Grafika / Lista** wraca do zwykłej listy.
+- **Rysunek techniczny szafy** (przycisk 📐): widok z przodu z numeracją U, wymiarami 19″ i wysokością w mm, wykaz urządzeń i tabliczka rysunkowa. Pobierzesz go jako **SVG** albo wydrukujesz i zapiszesz jako **PDF** (A4 poziomo). Grafikę szafy pobierzesz jako **PNG**. Wysokość szafy w U ustawiasz w edycji racka (0 = tyle, ile urządzeń).
+- **Animacje:** diody zajętych portów świecą i migają jak przy ruchu sieciowym, a wybrany port pulsuje. Przy systemowym ustawieniu „ogranicz ruch” animacje są wyłączone.
 - **Przenoszenie urządzenia do innego racka:** w edycji urządzenia, w polu **Rack**.
 
 ### Porty i patchcordy
@@ -488,6 +491,7 @@ public/
   index.html     aplikacja
   login.html     strona logowania
   app.js         logika interfejsu (renderowanie, edycja portów, panel Aruba)
+  rack-art.js    grafika szafy i rysunek techniczny (SVG, PNG, druk do PDF)
   i18n.js        tłumaczenia (pl, en, nl, cs) i przełącznik motywu
   style.css      wygląd, motyw jasny i ciemny
 sql/schema.sql   tabele (idempotentny)
@@ -505,7 +509,7 @@ backup.sh        kopia bazy
 
 | Tabela | Zawartość |
 |---|---|
-| `racks` | Szafy: nazwa, lokalizacja, notatki, kolejność na liście. |
+| `racks` | Szafy: nazwa, lokalizacja, notatki, wysokość w U (`height_u`, 0 = automatycznie), kolejność na liście. |
 | `devices` | Urządzenia: rack, typ (`patch`, `switch`, `fiber`, `other`), liczba portów RJ45 i SFP, stan, model, kolejność w racku. |
 | `ports` | Tylko opisane porty. Patchcord to `link_device` + `link_port`, zawsze zapisywany po obu stronach. `updated_at` służy do wykrywania równoczesnej edycji. |
 | `port_history` | Stan portu przed i po każdej zmianie, z autorem i czasem. |
@@ -523,7 +527,7 @@ Wszystkie adresy są względne wobec katalogu aplikacji, np. `https://serwer/rac
 | GET | `/api/health` | Test połączenia z bazą |
 | GET | `/api/state` | Cały stan: `racks` i `devices` z portami |
 | GET | `/api/session` | Czy logowanie jest włączone i kto jest zalogowany |
-| POST | `/api/racks` | Dodaje rack `{name, location, notes}` |
+| POST | `/api/racks` | Dodaje rack `{name, location, notes, heightU}` |
 | PUT | `/api/racks/:id` | Edytuje rack |
 | DELETE | `/api/racks/:id` | Usuwa pusty rack (ostatni rack zostaje zawsze) |
 | POST | `/api/racks/reorder` | `{ids:[…]}`: kolejność racków |

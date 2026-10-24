@@ -34,6 +34,10 @@ async function migrate(conn) {
       ADD CONSTRAINT fk_devices_rack FOREIGN KEY (rack_id) REFERENCES racks (id) ON UPDATE CASCADE`);
     console.log(`✓ Migracja: urządzenia przypisane do racka „${rackId}”`);
   }
+  // 2026-10: wysokość szafy w U (rysunek techniczny).
+  if (!(await hasColumn(conn, 'racks', 'height_u'))) {
+    await conn.query('ALTER TABLE racks ADD COLUMN height_u SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER notes');
+  }
   await ensureDefaultRack(conn);
 }
 

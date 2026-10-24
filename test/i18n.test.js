@@ -37,11 +37,11 @@ test('wszystkie języki mają te same klucze co polski', () => {
 test('każdy klucz z kodu ma tłumaczenie', () => {
   const { dict } = loadI18n();
   const used = new Set();
-  const src = read('public/app.js') + read('public/login.html') + read('public/index.html');
+  const src = read('public/app.js') + read('public/rack-art.js') + read('public/login.html') + read('public/index.html');
   for (const m of src.matchAll(/\bt\(\s*'([a-zA-Z]+\.[\w.]+)'/g)) used.add(m[1]);
   for (const m of src.matchAll(/t\(\s*\w+\s*\?\s*'([\w.]+)'\s*:\s*'([\w.]+)'/g)) { used.add(m[1]); used.add(m[2]); }
   for (const m of src.matchAll(/data-i18n(?:-ph|-title|-aria)?="([\w.]+)"/g)) used.add(m[1]);
-  for (const m of src.matchAll(/'((?:login|btn|banner|mode|editor|dev|face)\.[\w]+)'/g)) used.add(m[1]);
+  for (const m of src.matchAll(/'((?:login|btn|banner|mode|editor|dev|face|art)\.[\w]+)'/g)) used.add(m[1]);
   // klucze składane dynamicznie
   for (const k of ['unknown', 'used', 'free', 'reserved', 'broken']) used.add('status.' + k);
   for (const k of ['patch', 'switch', 'fiber', 'other']) used.add('kind.' + k);

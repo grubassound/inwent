@@ -46,16 +46,21 @@
         <select id="rackSel" data-i18n-aria="rack.select"></select>
         <button class="btn small icon" data-act="rackEdit" data-i18n-title="rack.edit" data-i18n-aria="rack.edit">✎</button>
         <button class="btn small icon" data-act="rackNew" data-i18n-title="rack.add" data-i18n-aria="rack.add">+</button>
+        <button class="btn small icon" data-act="art" data-i18n-title="art.open" data-i18n-aria="art.open">📐</button>
       </div>
       <div id="rackForm"></div>
     </div>
     <div class="rack-head"><span class="eyebrow" id="rackHead"></span><button class="btn small" id="btnAddDev" data-i18n="btn.addDevice">+ Urządzenie</button></div>
+    <div class="seg view-seg"><button type="button" data-act="viewGraphic" data-i18n="view.graphic">Grafika</button><button type="button" data-act="viewList" data-i18n="view.list">Lista</button></div>
+    <div id="rackArt" class="rack-art" hidden></div>
     <ul class="rack-list" id="rackList"></ul>
   </nav>
   <section class="device card" id="device"></section>
   <aside class="editor card" id="editor"></aside>
 </main>
 <div id="toast" class="toast" role="status" hidden></div>
+<div id="artOverlay" class="overlay" hidden></div>
+<script src="rack-art.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

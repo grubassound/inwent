@@ -217,7 +217,7 @@ async function getState(db = pool, withRev = true) {
   const [devs] = await db.query('SELECT * FROM devices ORDER BY sort_order, id');
   const [ports] = await db.query('SELECT * FROM ports');
   const racks = {};
-  for (const r of rks) racks[r.id] = { name: r.name, location: r.location || '', notes: r.notes || '', order: r.sort_order };
+  for (const r of rks) racks[r.id] = { name: r.name, location: r.location || '', notes: r.notes || '', heightU: r.height_u || 0, order: r.sort_order };
   const devices = {};
   for (const d of devs) {
     devices[d.id] = {
@@ -243,6 +243,7 @@ function rackFields(b, base = {}) {
     name: txt(b.name, 120) || base.name || 'Rack',
     location: b.location === undefined ? base.location || '' : txt(b.location, 255) || '',
     notes: b.notes === undefined ? base.notes || '' : b.notes == null ? '' : String(b.notes).slice(0, 5000),
+    height_u: b.heightU === undefined ? base.height_u || 0 : int(b.heightU, 0, 60, 0),
   };
 }
 // Wolne id na podstawie nazwy: „Serwerownia” → serwerownia, serwerownia-2, …
@@ -368,7 +369,7 @@ app.post('/api/racks', wrap(async (req, res) => {
   const id = await withTx(async (c) => {
     const id = await freeId(c, 'racks', f.name);
     const [[{ m }]] = await c.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM racks');
-    await c.query('INSERT INTO racks (id,name,location,notes,sort_order) VALUES (?,?,?,?,?)', [id, f.name, f.location, f.notes, m + 10]);
+    await c.query('INSERT INTO racks (id,name,location,notes,height_u,sort_order) VALUES (?,?,?,?,?,?)', [id, f.name, f.location, f.notes, f.height_u, m + 10]);
     return id;
   });
   res.json({ id, ...(await getState()) });
@@ -377,7 +378,7 @@ app.post('/api/racks', wrap(async (req, res) => {
 app.put('/api/racks/:id', wrap(async (req, res) => {
   const r = await rackOrThrow(pool, req.params.id);
   const f = rackFields(req.body || {}, r);
-  await pool.query('UPDATE racks SET name=?, location=?, notes=? WHERE id=?', [f.name, f.location, f.notes, r.id]);
+  await pool.query('UPDATE racks SET name=?, location=?, notes=?, height_u=? WHERE id=?', [f.name, f.location, f.notes, f.height_u, r.id]);
   res.json(await getState());
 }));
 
@@ -620,9 +621,9 @@ app.post('/api/import', wrap(async (req, res) => {
   await withTx(async (c) => {
     for (const [id, r] of rackEntries) {
       const f = rackFields(r);
-      await c.query(`INSERT INTO racks (id,name,location,notes,sort_order) VALUES (?,?,?,?,?)
-        ON DUPLICATE KEY UPDATE name=VALUES(name), location=VALUES(location), notes=VALUES(notes), sort_order=VALUES(sort_order)`,
-        [id, f.name, f.location, f.notes, Number.isFinite(r.order) ? r.order : 0]);
+      await c.query(`INSERT INTO racks (id,name,location,notes,height_u,sort_order) VALUES (?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE name=VALUES(name), location=VALUES(location), notes=VALUES(notes), height_u=VALUES(height_u), sort_order=VALUES(sort_order)`,
+        [id, f.name, f.location, f.notes, f.height_u, Number.isFinite(r.order) ? r.order : 0]);
     }
     const [rks] = await c.query('SELECT id FROM racks');
     const rackIds = new Set(rks.map((r) => r.id));

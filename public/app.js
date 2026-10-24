@@ -36,6 +36,10 @@ let confirmDelete = false;
 let history = null;          // {key, rows}
 let rackForm = null;         // null | 'new' | 'edit'
 let rackDelConfirm = false;
+// Lewa kolumna: grafika szafy albo lista urządzeń (zapamiętane; na telefonie domyślnie lista).
+const PREF_VIEW = 'rack-inventory.view';
+let rackView = (() => { try { const v = localStorage.getItem(PREF_VIEW); if (v === 'graphic' || v === 'list') return v; } catch(e) {} return matchMedia('(max-width:780px)').matches ? 'list' : 'graphic'; })();
+let artTab = null;           // null | 'drawing' | 'graphic' – otwarte okno rysunku szafy
 // Powiększenie panelu switcha: 'fit' (do szerokości) albo skala względem rozmiaru bazowego. Zapamiętane w przeglądarce.
 const PREF_ZOOM = 'rack-inventory.zoom';
 let zoom = (() => { try { const z = parseFloat(localStorage.getItem(PREF_ZOOM)); return z >= 0.5 && z <= 4 ? z : 'fit'; } catch(e) { return 'fit'; } })();
@@ -177,6 +181,10 @@ function renderRack(){
   $('rackHead').textContent = rk && rk.location ? rk.location : t('rack.top');
   $('rackHead').title = $('rackHead').textContent;
   const ids = sortedIds();
+  document.querySelectorAll('[data-act=viewGraphic],[data-act=viewList]').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.act==='viewGraphic') === (rackView==='graphic'))));
+  $('rackArt').hidden = rackView !== 'graphic' || !ids.length;
+  $('rackList').hidden = rackView === 'graphic' && ids.length > 0;
+  if (rackView === 'graphic' && ids.length) $('rackArt').innerHTML = rackGraphic(sel.rack, false);
   $('rackList').innerHTML = ids.length ? ids.map((id,i) => {
     const d = devices[id], c = counts(d), tot = c.total||1;
     return `<li><button class="ru ${d.status==='unused'||d.status==='remove'?'unused':''}" data-dev="${esc(id)}" aria-current="${sel.dev===id}">
@@ -186,6 +194,51 @@ function renderRack(){
     </button></li>`;
   }).join('') : `<li class="empty" style="padding:12px;text-align:left">${esc(t('rack.noDevices'))}</li>`;
 }
+// Dane dla rysunków (public/rack-art.js): rack i jego urządzenia od góry.
+function artData(rackId){
+  const r = racks[rackId] || {name:'', location:'', heightU:0};
+  return [{...r, id: rackId}, sortedIds(rackId).map(id => ({...devices[id], id}))];
+}
+function rackGraphic(rackId, isStatic){
+  const [r, devs] = artData(rackId);
+  return window.RackArt.graphic(r, devs, {selected: isStatic ? null : sel.dev, colorHex, static: isStatic, title: r.name});
+}
+function rackDrawing(rackId){
+  const [r, devs] = artData(rackId);
+  return window.RackArt.drawing(r, devs, {t, date: new Date().toISOString().slice(0,10),
+    kindLabel: k => KINDS.includes(k) ? t('kind.'+k) : k, statusLabel: k => t('devstatus.'+(DEVSTATUS.includes(k)?k:'active'))});
+}
+// Okno z rysunkiem technicznym i grafiką szafy (pobieranie SVG/PNG, druk do PDF).
+function renderArt(){
+  const el = $('artOverlay');
+  if (!artTab){ el.hidden = true; el.innerHTML = ''; document.body.classList.remove('art-open'); return; }
+  const tab = k => `<button class="btn small" data-act="artTab" data-tab="${k}" aria-pressed="${artTab===k}">${esc(t(k==='drawing'?'art.tabDrawing':'art.tabGraphic'))}</button>`;
+  el.hidden = false; document.body.classList.add('art-open');
+  el.innerHTML = `<div class="overlay-card card" role="dialog" aria-modal="true" aria-label="${esc(t('art.open'))}">
+    <div class="overlay-bar"><div class="seg">${tab('drawing')}${tab('graphic')}</div><span class="spacer"></span>
+      <button class="btn small" data-act="artSvg">${esc(t('btn.downloadSvg'))}</button>
+      ${artTab==='graphic'?`<button class="btn small" data-act="artPng">${esc(t('btn.downloadPng'))}</button>`:''}
+      <button class="btn small" data-act="artPrint">${esc(t('btn.print'))}</button>
+      <button class="btn small" data-act="artClose">${esc(t('btn.close'))}</button></div>
+    <div class="overlay-body ${artTab}">${artTab==='drawing' ? rackDrawing(sel.rack) : rackGraphic(sel.rack, false)}</div></div>`;
+}
+function artFileName(ext){ return `${(racks[sel.rack]?.name||'rack').replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'')}-${artTab==='drawing'?'rysunek':'grafika'}.${ext}`; }
+function download(blob, name){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+// PNG: statyczna wersja grafiki (bez animacji) narysowana na płótnie w 3× rozdzielczości.
+function downloadPng(){
+  const svg = rackGraphic(sel.rack, true), img = new Image();
+  const m = svg.match(/data-w="(\d+)" data-h="(\d+)"/), w = Number(m[1]), h = Number(m[2]), k = 3;
+  img.onload = () => {
+    const c = document.createElement('canvas'); c.width = w*k; c.height = h*k;
+    const g = c.getContext('2d'); g.scale(k,k); g.drawImage(img, 0, 0, w, h);
+    c.toBlob(b => download(b, artFileName('png')), 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+
 // Formularz racka rysowany tylko na żądanie, żeby odświeżanie w tle nie kasowało wpisywanego tekstu.
 function renderRackForm(focus){
   const el = $('rackForm');
@@ -198,6 +251,7 @@ function renderRackForm(focus){
   el.innerHTML = `<div class="dialog"><div class="eyebrow">${esc(t(edit?'rack.formEdit':'rack.formNew'))}</div><div class="form">
     <div class="field"><label for="r_name">${esc(t('f.name'))}</label><input id="r_name" type="text" value="${esc(r.name)}" placeholder="${esc(t('ph.rackName'))}"></div>
     <div class="field"><label for="r_loc">${esc(t('f.location'))}</label><input id="r_loc" type="text" value="${esc(r.location)}" placeholder="${esc(t('ph.rackLoc'))}"></div>
+    <div class="field"><label for="r_height">${esc(t('f.height'))}</label><input id="r_height" type="number" min="0" max="60" value="${r.heightU||0}"><span class="hint">${esc(t('hint.height'))}</span></div>
     <div class="field"><label for="r_notes">${esc(t('f.notes'))}</label><textarea id="r_notes">${esc(r.notes)}</textarea></div>
     <div class="actions"><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn primary small" data-act="rackSave">${esc(t('btn.save'))}</button><button class="btn small" data-act="rackCancel">${esc(t('btn.cancel'))}</button></div>
       ${edit && rackIds().length > 1 ? `<div style="display:flex;gap:6px"><button class="btn small" data-act="rackUp" ${i<=0?'disabled':''} aria-label="${esc(t('rack.up'))}" title="${esc(t('rack.up'))}">▲</button><button class="btn small" data-act="rackDown" ${i>=rackIds().length-1?'disabled':''} aria-label="${esc(t('rack.down'))}" title="${esc(t('rack.down'))}">▼</button></div>` : ''}
@@ -243,6 +297,12 @@ function switchGeom(d){
   const W = Math.max(g.MINW, g.EAR*2 + g.LEFT + portsW + 40 + sfpW + 20);
   return {N, S, W, H:g.H, sfpX: W - g.EAR - 16 - sfpW};
 }
+// Dioda portu: świeci (poświata), a przy zajętym porcie miga w swoim rytmie jak przy ruchu sieciowym.
+const ledRnd = n => { const x = Math.sin(n*12.9898)*43758.5453; return x - Math.floor(x); };
+function ledStyle(n, st){
+  if (st === 'used') return ` filter="url(#ledglow)" style="animation-duration:${(0.45+ledRnd(n)*1.4).toFixed(2)}s;animation-delay:-${(ledRnd(n*3)*2).toFixed(2)}s"`;
+  return st === 'reserved' || st === 'broken' ? ' filter="url(#ledglow)"' : '';
+}
 function switchPanel(id){
   const d = devices[id], g = PANEL, {N, S, W, H, sfpX} = switchGeom(d);
   const x0 = g.EAR + g.LEFT;
@@ -260,7 +320,7 @@ function switchPanel(id){
       const op = bottom ? 'M3 18H23V6H17V3H9V6H3Z' : 'M3 3H23V15H17V18H9V15H3Z';
       body = `<rect class="jk" width="${g.JW}" height="${g.JH}" rx="2"/><path class="op" d="${op}"/>`
         + (plugged ? `<rect x="5" y="${bottom?7:4}" width="16" height="10" rx="1.5" fill="${hex||'#8d96a0'}" class="plug"/>` : '')
-        + `<rect class="led" x="${bottom?19:2}" y="${bottom?19.2:0.6}" width="5" height="1.6" rx=".8"/>`;
+        + `<rect class="led" x="${bottom?19:2}" y="${bottom?19.2:0.6}" width="5" height="1.6" rx=".8"${ledStyle(n, st)}/>`;
     }
     const w = sfp?32:g.JW, h = sfp?18:g.JH;
     out.push(`<g class="${cls}" data-port="${n}" transform="translate(${x},${y})" role="button" tabindex="0" aria-pressed="${sel.dev===id&&sel.port==n}" aria-label="${esc(tip)}"><title>${esc(tip)}</title>`
@@ -277,9 +337,10 @@ function switchPanel(id){
     port(N+1+k, sfpX + Math.floor(k/2)*g.SP, bottom ? g.ROW2+2 : g.TOP, bottom, true);
   }
   const ear = x => `<rect class="ear" x="${x}" y="0" width="${g.EAR}" height="${H}" rx="3"/><rect class="slot" x="${x+7}" y="16" width="10" height="6" rx="3"/><rect class="slot" x="${x+7}" y="${H-22}" width="10" height="6" rx="3"/>`;
-  const leds = ['PWR','FLT','LOC'].map((l,i)=>`<circle class="sled${i?'':' on'}" cx="${g.EAR+16}" cy="${46+i*14}" r="3"/><text class="sl" x="${g.EAR+24}" y="${49+i*14}">${l}</text>`).join('');
+  const leds = ['PWR','FLT','LOC'].map((l,i)=>`<circle class="sled${i?'':' on'}"${i?'':' filter="url(#ledglow)"'} cx="${g.EAR+16}" cy="${46+i*14}" r="3"/><text class="sl" x="${g.EAR+24}" y="${49+i*14}">${l}</text>`).join('');
   return `<svg class="chassis" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" data-w="${W}" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="${esc(d.model||d.name)}">
-    <defs><linearGradient id="chg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a5058"/><stop offset=".5" stop-color="#363b41"/><stop offset="1" stop-color="#2a2e33"/></linearGradient></defs>
+    <defs><filter id="ledglow" x="-2" y="-4" width="5" height="9"><feGaussianBlur stdDeviation="1.1" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <linearGradient id="chg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a5058"/><stop offset=".5" stop-color="#363b41"/><stop offset="1" stop-color="#2a2e33"/></linearGradient></defs>
     <rect class="body" x="0" y="0" width="${W}" height="${H}" rx="4" fill="url(#chg)"/>
     ${ear(0)}${ear(W-g.EAR)}
     <text class="model" x="${g.EAR+12}" y="26">${esc((d.model||d.name).slice(0,22))}</text>
@@ -550,7 +611,8 @@ function devFromForm(){
 document.addEventListener('click', async e => {
   const el = e.target.closest('[data-dev],[data-port],[data-act],[data-st],[data-color],[data-goto]');
   if (!el) return;
-  if (el.classList.contains('ru')){
+  if (el.classList.contains('ru') || el.classList.contains('rg-dev')){
+    if (artTab){ artTab = null; renderArt(); }
     if (!canLeavePort()) return;
     sel.dev = el.dataset.dev; sel.port = null; draft=null; closeDevForm(); bulk={on:false,set:new Set()}; render(); return;
   }
@@ -647,6 +709,20 @@ document.addEventListener('click', async e => {
     case 'zoomIn': setZoom(currentScale()*1.25); break;
     case 'zoomOut': setZoom(currentScale()/1.25); break;
     case 'zoomFit': setZoom('fit'); break;
+    case 'viewGraphic': case 'viewList':
+      rackView = a==='viewGraphic' ? 'graphic' : 'list';
+      try { localStorage.setItem(PREF_VIEW, rackView); } catch(err) {}
+      renderRack(); break;
+    case 'art': artTab = 'drawing'; renderArt(); break;
+    case 'artTab': artTab = el.dataset.tab; renderArt(); break;
+    case 'artClose': artTab = null; renderArt(); break;
+    case 'artSvg': {
+      const svg = artTab==='drawing' ? rackDrawing(sel.rack) : rackGraphic(sel.rack, true);
+      download(new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n'+svg], {type:'image/svg+xml'}), artFileName('svg'));
+      break;
+    }
+    case 'artPng': downloadPng(); break;
+    case 'artPrint': window.print(); break;
     case 'rackNew': case 'rackEdit': {
       const mode = a==='rackNew' ? 'new' : 'edit';
       rackForm = rackForm===mode ? null : mode; rackDelConfirm = false; renderRackForm(true);
@@ -654,7 +730,7 @@ document.addEventListener('click', async e => {
     }
     case 'rackCancel': rackForm = null; renderRackForm(); break;
     case 'rackSave': {
-      const body = {name: $('r_name').value.trim(), location: $('r_loc').value.trim(), notes: $('r_notes').value};
+      const body = {name: $('r_name').value.trim(), location: $('r_loc').value.trim(), notes: $('r_notes').value, heightU: parseInt($('r_height').value,10)||0};
       if (!body.name){ toast(t('toast.rackName')); $('r_name').focus(); break; }
       if (rackForm==='new'){
         if (!canLeavePort()) break;
@@ -718,7 +794,8 @@ $('importFile').addEventListener('change', e => {
 // Gniazda w panelu SVG: Enter/spacja działa jak kliknięcie.
 document.addEventListener('keydown', e => {
   const a = document.activeElement;
-  if ((e.key==='Enter' || e.key===' ') && a && a.matches && a.matches('#ports [data-port]')){
+  if (e.key==='Escape' && artTab){ e.stopImmediatePropagation(); artTab = null; renderArt(); return; }
+  if ((e.key==='Enter' || e.key===' ') && a && a.matches && a.matches('#ports [data-port], .rg-dev')){
     e.preventDefault(); a.dispatchEvent(new MouseEvent('click', {bubbles:true}));
   }
 });
@@ -746,7 +823,7 @@ window.i18n.bindThemeButton($('themeBtn'));
 applyLang();
 document.addEventListener('langchange', () => {
   readDraft();
-  applyLang(); render(); renderRackForm(); renderImportBanner();
+  applyLang(); render(); renderRackForm(); renderImportBanner(); renderArt();
 });
 
 // Odświeżanie: zmiany z innych urządzeń (telefon przy szafie, komputer w biurze).

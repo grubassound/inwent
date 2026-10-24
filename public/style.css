@@ -200,6 +200,47 @@ select.compact{width:auto;padding:6px 8px;font-size:13px}
 .sp[aria-pressed="true"] .sel{stroke:#fff;stroke-width:2.5}
 .sp:focus-visible .sel{stroke:#3ddc84;stroke-width:2}
 
+/* Animacje diod: zajęte porty migają (ruch sieciowy), wybrany port pulsuje. */
+@keyframes led-act{0%,100%{opacity:1}45%{opacity:.25}55%{opacity:1}}
+@keyframes sel-pulse{0%,100%{stroke-opacity:1}50%{stroke-opacity:.35}}
+.sp.s-used .led{animation:led-act 1s steps(1,end) infinite}
+.sp[aria-pressed="true"] .sel{animation:sel-pulse 1.6s ease-in-out infinite}
+.rg-led{animation:led-act 1s steps(1,end) infinite}
+.rg-sel{animation:sel-pulse 1.6s ease-in-out infinite}
+
+/* Grafika szafy w lewej kolumnie */
+.view-seg{margin:0 2px 10px}
+.view-seg button{flex:1;justify-content:center}
+.rack-art{margin:0 -2px}
+.rack-art .rack-graphic{display:block;width:100%;height:auto}
+.rg-dev{cursor:pointer;outline:none}
+.rg-dev:hover > rect:first-child{stroke:#3ddc84;stroke-opacity:.8}
+.rg-dev:focus-visible > rect:first-child{stroke:#3ddc84;stroke-width:1.5;stroke-opacity:1}
+@media (max-width:780px){.rack-art .rack-graphic{max-width:360px;margin:0 auto}}
+
+/* Okno: rysunek techniczny i grafika szafy */
+.overlay{position:fixed;inset:0;z-index:40;background:rgba(8,10,13,.6);display:flex;align-items:center;justify-content:center;padding:20px;animation:fade-in .15s ease-out}
+.overlay[hidden]{display:none}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+.overlay-card{width:min(1200px,100%);max-height:100%;display:flex;flex-direction:column;overflow:hidden}
+.overlay-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border)}
+.overlay-bar .spacer{flex:1}
+.overlay-body{overflow:auto;padding:16px;display:flex;justify-content:center;background:var(--surface-2)}
+.overlay-body.drawing svg{width:100%;max-width:1100px;height:auto;background:#fff;box-shadow:0 2px 12px rgba(0,0,0,.25)}
+.overlay-body.graphic svg{height:min(70vh,900px);width:auto;max-width:100%}
+body.art-open{overflow:hidden}
+@media print{
+  @page{size:A4 landscape;margin:0}
+  body.art-open{padding:0;background:#fff}
+  body.art-open > *:not(#artOverlay){display:none!important}
+  body.art-open .overlay{position:static;padding:0;background:#fff;display:block}
+  body.art-open .overlay-card{border:0;box-shadow:none;max-height:none}
+  body.art-open .overlay-bar{display:none}
+  body.art-open .overlay-body{padding:0;background:#fff;overflow:visible}
+  body.art-open .overlay-body svg{width:297mm;height:210mm;max-width:none;box-shadow:none}
+  body.art-open .overlay-body.graphic svg{width:auto;height:190mm}
+}
+
 .bulk{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border)}
 .port-table-wrap{margin-top:18px;overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:13px}
@@ -247,4 +288,4 @@ td.lbl{font-family:var(--font-mono);font-weight:600;white-space:nowrap}
 .history{margin-top:10px;display:grid;gap:6px;font-size:12.5px}
 .history div{padding:8px 10px;border-radius:8px;background:var(--surface-2);border:1px solid var(--border)}
 .history .when{color:var(--muted);font-family:var(--font-mono);font-size:11px}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
