@@ -163,6 +163,7 @@ select.compact{width:auto;padding:6px 8px;font-size:13px}
 /* Panel switcha (SVG, w stylu Aruba). Obudowa ma ten sam wygląd w obu motywach – to sprzęt. */
 .chassis-bar{display:flex;align-items:center;gap:6px;margin-bottom:8px}
 .chassis-bar .spacer{flex:1}
+@media (max-width:640px){.chassis-bar{flex-wrap:wrap}.chassis-bar .eyebrow{flex-basis:100%}}
 .zoom-val{min-width:44px;text-align:center;font-size:12px;color:var(--muted)}
 .chassis-wrap{overflow:auto;border-radius:10px;background:var(--face);border:1px solid var(--border);padding:12px;overscroll-behavior-x:contain}
 .chassis{display:block;max-width:none}

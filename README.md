@@ -1,73 +1,163 @@
 # Rack Inventory
 
-Aplikacja webowa do inwentaryzacji szafy sieciowej. Opisujesz w niej każdy port patchpaneli i switchy: status, patchcord w racku (oba końce), dokąd prowadzi kabel, urządzenie końcowe, VLAN, kolor i długość kabla, etykietę, plan po przebudowie i notatki. Dane trzymane są w MySQL/MariaDB, a każda zmiana portu trafia do historii.
+Aplikacja webowa do inwentaryzacji szaf sieciowych. Dla każdego portu patchpaneli i switchy zapisujesz:
+- status portu,
+- patchcord z drugim końcem,
+- dokąd prowadzi kabel i jakie urządzenie jest na końcu,
+- VLAN, kolor, długość i etykietę kabla,
+- plan po przebudowie i notatki.
 
-Stack: **Node.js 18+ · Express · MySQL 8 / MariaDB 10.5+**. Frontend to czysty HTML/CSS/JS bez kompilacji.
+Dane trzymane są w MySQL/MariaDB, a każda zmiana portu trafia do historii.
 
-Jak to działa na serwerze: aplikacja to mały serwer Node.js, który działa w tle jako usługa systemd i nasłuchuje tylko lokalnie (`127.0.0.1:3080`). Z sieci łączysz się przez **Apache** (albo nginx). Apache odbiera ruch na portach 80/443, obsługuje HTTPS i przekazuje zapytania do Node.js. Ten sam Apache może jednocześnie obsługiwać inne strony, np. w PHP.
+![Rack Inventory – szafa, przedni panel switcha i karta portu](docs/img/ekran-jasny.png)
+
+### Galeria
+
+**Przedni panel switcha w stylu Aruba.** Kolor ramki pokazuje status portu, a wtyczka kolor kabla. Panel można przybliżać i oddalać.
+
+![Zbliżenie panelu Aruba: gniazda RJ45 z wtyczkami w kolorach kabli, porty wolne, rezerwacja, uszkodzony i do ustalenia](docs/img/panel-aruba.png)
+
+**Motyw ciemny.** Przełączasz go jednym kliknięciem (☀/☾).
+
+![Rack Inventory w motywie ciemnym](docs/img/ekran-ciemny.png)
+
+**Wyszukiwarka** przeszukuje wszystkie racki. Kliknięcie wyniku otwiera właściwy rack i port.
+
+![Wyniki wyszukiwania „biuro 2” z portami w racku Piętro 2](docs/img/wyszukiwanie.png)
+
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/img/telefon-panel.png" alt="Telefon: panel switcha" width="250"><br><b>Na telefonie</b><br>panel switcha i lista portów</td>
+<td align="center" width="33%"><img src="docs/img/telefon-port.png" alt="Telefon: karta portu wysunięta od dołu" width="250"><br><b>Karta portu</b><br>wysuwa się od dołu ekranu</td>
+<td align="center" width="33%"><img src="docs/img/logowanie.png" alt="Strona logowania po holendersku" width="250"><br><b>4 języki</b><br>PL · EN · NL · CS, tu logowanie po holendersku</td>
+</tr>
+</table>
+
+**Stack:** Node.js 18+ · Express · MySQL 8 / MariaDB 10.5+. Frontend to czysty HTML, CSS i JavaScript, bez kompilacji i bez frameworków.
+
+---
+
+## Spis treści
+
+**Dla użytkownika**
+1. [Co potrafi](#co-potrafi)
+2. [Jak pracować przy szafie](#jak-pracować-przy-szafie)
+
+**Dla administratora**
+
+3. [Jak to działa na serwerze](#jak-to-działa-na-serwerze)
+4. [Wymagania](#wymagania)
+5. [Szybka instalacja](#szybka-instalacja)
+6. [Instalacja ręczna](#instalacja-ręczna)
+7. [Konfiguracja (.env)](#konfiguracja-env)
+8. [Apache, nginx i HTTPS](#apache-nginx-i-https)
+9. [Logowanie](#logowanie)
+10. [Kopie zapasowe](#kopie-zapasowe)
+11. [Aktualizacja](#aktualizacja)
+12. [Import danych z wersji w Claude](#import-danych-z-wersji-w-claude)
+13. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
+
+**Dla programisty**
+
+14. [Struktura projektu](#struktura-projektu)
+15. [Baza danych](#baza-danych)
+16. [API](#api)
+17. [Tłumaczenia](#tłumaczenia)
+18. [Testy](#testy)
+
+---
+
+## Co potrafi
+
+### Szafy i urządzenia
+- **Wiele racków.** Przełączasz je listą nad szafą. Przyciskiem **+** dodajesz nowy rack, a przyciskiem **✎** edytujesz bieżący (nazwa, lokalizacja, notatki, kolejność na liście). Aplikacja pamięta ostatnio oglądany rack.
+- **Widok szafy** od góry do dołu, z paskiem zajętości każdego urządzenia.
+- **Przedni panel switcha w stylu Aruba:**
+  - obudowa 1U z diodami stanu,
+  - gniazda RJ45 w blokach po 12 (nieparzyste u góry, parzyste u dołu) i moduły SFP po prawej,
+  - zajęty port ma wtyczkę w kolorze kabla.
+
+  Kliknięcie gniazda otwiera kartę portu.
+- **Przybliżanie panelu:** przyciski **−**, **+** i **Dopasuj**, a także **Ctrl + kółko myszy** albo gest szczypania na touchpadzie. Powiększenie zostaje zapamiętane.
+- **Szablony modeli Aruba** (2530, 2540, 2930F, CX 6100, Instant On 1930) w formularzu urządzenia. Szablon wypełnia model oraz liczbę portów i modułów SFP.
+- **Patchpanele i panele światłowodowe** mają porty w modułach po 6.
+- **Przenoszenie urządzenia do innego racka:** w edycji urządzenia, w polu **Rack**.
+
+### Porty i patchcordy
+- **Statusy portów:** do ustalenia, zajęty, wolny, rezerwacja, uszkodzony. Dodatkowo znacznik **zweryfikowany fizycznie**.
+- **Patchcord zapisuje się po obu stronach naraz.**
+  - Przepięcie zwalnia stary koniec: port „Zajęty” wraca wtedy do „Do ustalenia”, żeby ktoś go sprawdził.
+  - Kolor, długość i etykieta kabla są wspólne dla obu końców.
+- **Patchcordy między rackami:** etykieta drugiego końca ma wtedy nazwę racka, np. `Serwerownia › A5`.
+- **Trasa kabla** w karcie portu, np. `PKN01:12 ⇄ B7 → Biuro 1.12, gniazdo 3 (Drukarka)`.
+- **Zapisz i dalej ›** oraz strzałki **← →** pozwalają przechodzić port po porcie.
+- **Zaznaczanie wielu portów** i hurtowa zmiana statusu. Hurtowe „Wolny” odpina patchcordy z zaznaczonych portów.
+- **Historia zmian** każdego portu: kto, kiedy i co zmienił.
+
+### Praca w kilka osób
+- **Automatyczne odświeżanie co 20 s.** Zmiany wprowadzone na telefonie przy szafie widać na komputerze w biurze.
+- **Ochrona przed nadpisaniem:** gdy dwie osoby edytują ten sam port, druga widzi ostrzeżenie z aktualnym stanem z bazy i sama decyduje, czy zapisać swoją wersję.
+- **Pytanie o niezapisane zmiany** przed przejściem do innego portu.
+
+### Interfejs
+- **Cztery języki:** polski, angielski, holenderski i czeski. Na start aplikacja wybiera język przeglądarki, a wybór zostaje zapamiętany na urządzeniu.
+- **Motyw jasny i ciemny:** przełącznik ☀/☾ w nagłówku. Dopóki nie wybierzesz, obowiązuje motyw systemu.
+- **Działa na telefonie.** Karta portu wysuwa się wtedy od dołu.
+- **Wyszukiwarka** po pokoju, gnieździe, VLAN-ie, etykiecie, kolorze i notatkach we wszystkich rackach. Kliknięcie wyniku otwiera właściwy rack i port.
+
+### Dane
+- **Eksport CSV** (otwiera się w Excelu) w języku interfejsu.
+- **Kopia JSON** całej bazy oraz **import** takiej kopii.
+- **Logowanie** przez stronę logowania, z opcją „Zapamiętaj mnie”.
+
+---
+
+## Jak pracować przy szafie
+
+1. Otwórz aplikację na telefonie. Wybierz rack z listy u góry panelu szafy, a potem urządzenie.
+2. Kliknij port. Na switchu kliknij gniazdo na panelu przednim. Jeśli gniazda są za małe, przybliż panel przyciskiem **+**.
+3. Ustaw status. W polu **Patchcord — drugi koniec** wybierz urządzenie i port po drugiej stronie kabla, np. Patchpanel B, port 7. Drugi koniec uzupełni się sam.
+4. Na patchpanelu wpisz **Dokąd prowadzi**, np. pokój i numer gniazda w ścianie, oraz **Urządzenie końcowe**.
+5. Wybierz kolor kabla i wpisz długość. Gdy kabel jest przetestowany, zaznacz **Zweryfikowany fizycznie**.
+6. **Zapisz i dalej ›** przechodzi od razu do kolejnego portu.
+7. Puste gniazda oznaczaj hurtem: **Zaznacz wiele** → zaznacz porty → **Wolny**.
+8. Pole **Plan po przebudowie** opisuje, gdzie port ma trafić po porządkowaniu szafy.
+
+Etykiety portów:
+- patchpanele z jednoliterowym prefiksem: `A1…A24`, `B1…`
+- z dłuższym prefiksem: `CAM-1…`
+- switche: `PKN01:1…PKN01:52` (49–52 to SFP)
+
+Prefiks ustawiasz w edycji urządzenia.
+
+---
+
+## Jak to działa na serwerze
+
+Aplikacja to mały serwer Node.js. Działa w tle jako usługa systemd i nasłuchuje tylko lokalnie (`127.0.0.1:3080`). Z sieci łączysz się przez **Apache** albo nginx. Serwer WWW odbiera ruch na portach 80 i 443, obsługuje HTTPS i przekazuje zapytania do Node.js. Ten sam Apache może jednocześnie obsługiwać inne strony, np. w PHP.
 
 ```
 przeglądarka ──► Apache :80/:443 ──► Node.js 127.0.0.1:3080 ──► MySQL/MariaDB
                     └──► inne strony (PHP, statyczne…)
 ```
 
-> Nie masz jeszcze serwera WWW? Instrukcja instalacji Apache, PHP, MariaDB, HTTPS i dodatków od zera na Ubuntu/Debian jest w **[docs/serwer-www-linux.md](docs/serwer-www-linux.md)**.
-
----
-
-## Spis treści
-
-1. [Co potrafi](#co-potrafi)
-2. [Wymagania](#wymagania)
-3. [Szybka instalacja (install.sh)](#szybka-instalacja)
-4. [Instalacja ręczna krok po kroku](#instalacja-ręczna)
-5. [Apache, nginx i HTTPS](#apache-nginx-i-https)
-6. [Logowanie](#logowanie)
-7. [Przeniesienie danych z wersji w Claude](#przeniesienie-danych-z-wersji-w-claude)
-8. [Kopie zapasowe](#kopie-zapasowe)
-9. [Aktualizacja](#aktualizacja)
-10. [Jak pracować przy szafie](#jak-pracować-przy-szafie)
-11. [Struktura bazy i API](#struktura-bazy-i-api)
-12. [Testy](#testy)
-13. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
-
----
-
-## Co potrafi
-
-- **Cztery języki:** polski, angielski, holenderski i czeski. Przełącznik jest w nagłówku i na stronie logowania. Domyślnie aplikacja wybiera język przeglądarki, a wybór zostaje zapamiętany na urządzeniu. Eksport CSV jest w języku interfejsu.
-- **Motyw jasny i ciemny:** przełącznik ☀/☾ w nagłówku. Bez wyboru obowiązuje motyw systemu.
-- **Wiele racków.** Przełączasz je listą nad szafą, a przyciskami ✎ i + edytujesz bieżący albo dodajesz nowy (nazwa, lokalizacja, notatki). Aplikacja pamięta ostatnio oglądany rack. Urządzenie przeniesiesz do innego racka w jego edycji (pole „Rack”). Patchcord może łączyć porty w różnych rackach. Wtedy etykieta drugiego końca ma nazwę racka, np. `Serwerownia › A5`.
-- **Widok szafy** od góry do dołu z paskiem zajętości każdego urządzenia.
-- **Front urządzenia.** Switche mają realistyczny przedni panel 1U w stylu Aruba: gniazda RJ45 w blokach po 12 (nieparzyste u góry, parzyste u dołu), moduły SFP po prawej, diody stanu i wtyczki w kolorze kabla. Kliknięcie gniazda otwiera kartę portu. Panel można przybliżać i oddalać (przyciski −/+/Dopasuj, Ctrl + kółko myszy albo gest szczypania na touchpadzie), a powiększenie jest zapamiętane. W formularzu urządzenia jest lista szablonów popularnych modeli Aruba (2530, 2540, 2930F, CX 6100, Instant On 1930), która wypełnia liczbę portów i model. Patchpanele mają moduły po 6 portów.
-- **Statusy portów:** do ustalenia, zajęty, wolny, rezerwacja, uszkodzony. Dodatkowo znacznik „zweryfikowany fizycznie”.
-- **Patchcordy zapisują się po obu stronach w jednej transakcji.** Przepięcie automatycznie zwalnia stary koniec: port „Zajęty” wraca wtedy do „Do ustalenia”. Kolor, długość i etykieta kabla są wspólne dla obu końców.
-- **Trasa kabla:** `PKN01:12 ⇄ B7 → Biuro 1.12, gniazdo 3 (Drukarka)`.
-- **„Zapisz i dalej”** oraz strzałki ← → do szybkiego przechodzenia port po porcie.
-- **Zaznaczanie wielu portów** i hurtowa zmiana statusu. Hurtowe „Wolny” odpina patchcordy z zaznaczonych portów.
-- **Ochrona przed nadpisaniem:** gdy dwie osoby edytują ten sam port, druga dostaje ostrzeżenie z aktualnym stanem z bazy i sama decyduje, czy nadpisać. Przy przejściu do innego portu aplikacja pyta o niezapisane zmiany.
-- **Zmniejszenie liczby portów urządzenia** usuwa opis portów spoza nowego zakresu i odpina prowadzące do nich patchcordy. Aplikacja najpierw pyta o zgodę.
-- **Wyszukiwarka** po pokoju, gnieździe, VLAN-ie, etykiecie i notatkach, we wszystkich rackach. Kliknięcie wyniku przełącza na właściwy rack.
-- **Historia zmian** każdego portu: kto i kiedy zmienił.
-- **Eksport CSV** (otwiera się w Excelu) i **kopia JSON**, plus import JSON.
-- Działa na telefonie. Karta portu wysuwa się wtedy od dołu.
-- Automatyczne odświeżanie co 20 s, więc zmiany z telefonu widać na komputerze.
+Przy starcie aplikacja sama tworzy brakujące tabele i aktualizuje strukturę bazy (`src/migrate.js`).
 
 ---
 
 ## Wymagania
 
-- Ubuntu / Debian (inne Linuksy też, instalator zakłada `apt`-owe ścieżki tylko dla systemd).
-- **Node.js 18 lub nowszy.** Sprawdź: `node -v`. Instalacja Node 22 LTS z NodeSource:
+- **Linux:** Ubuntu albo Debian. Na innych dystrybucjach aplikacja też działa, tylko `install.sh` zakłada `apt` i systemd.
+- **Node.js 18 lub nowszy.** Sprawdź poleceniem `node -v`. Instalacja Node 22 LTS:
   ```bash
   curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
   sudo apt install -y nodejs
   ```
-- **MySQL 8** albo **MariaDB 10.5+**, już działający.
-- **Apache 2.4** (albo nginx) jako serwer WWW przed aplikacją. Bez niego aplikacja też działa, ale tylko pod adresem `http://IP:3080` i bez HTTPS.
-- `git`.
+- **MySQL 8 albo MariaDB 10.5+.**
+- **Apache 2.4** (albo nginx) jako serwer WWW przed aplikacją. Bez niego aplikacja też działa, ale tylko pod `http://IP:3080` i bez HTTPS.
+- **git**
 
-Brakuje czegoś z tej listy? Wszystko po kolei: [docs/serwer-www-linux.md](docs/serwer-www-linux.md).
+> Nie masz jeszcze serwera WWW? Instalacja Apache, PHP, MariaDB, HTTPS i dodatków od zera na Ubuntu/Debian jest opisana w **[docs/serwer-www-linux.md](docs/serwer-www-linux.md)**.
 
 ---
 
@@ -80,24 +170,23 @@ cd /opt/rack-inventory
 bash install.sh
 ```
 
-> Repozytorium jest prywatne. Przy `git clone` przez HTTPS podaj login GitHub i **Personal Access Token** jako hasło (GitHub → Settings → Developer settings → Personal access tokens, uprawnienie `repo` lub fine-grained „Contents: Read”). Możesz też użyć klucza SSH: `git clone git@github.com:grubassound/inwent.git`.
+> Repozytorium jest prywatne. Przy `git clone` przez HTTPS podaj login GitHub i **Personal Access Token** jako hasło (GitHub → Settings → Developer settings → Personal access tokens, uprawnienie „Contents: Read”). Możesz też sklonować przez SSH: `git clone git@github.com:grubassound/inwent.git`.
 
 Instalator po kolei:
 
-1. Sprawdza wersję Node.js.
-2. Instaluje zależności (`npm install --omit=dev`).
-3. Pyta o dane bazy. Może też **sam założyć bazę i użytkownika MySQL** przez `sudo mysql`, z losowym hasłem zapisanym w `.env`.
-4. Pyta o adres i port aplikacji oraz opcjonalny login i hasło.
-5. Tworzy tabele i (jeśli chcesz) wczytuje układ racka: 16 urządzeń z inwentaryzacji.
-6. Instaluje i uruchamia usługę systemd `rack-inventory`.
+1. Sprawdza wersję Node.js i instaluje zależności (`npm install --omit=dev`).
+2. Pyta o dane bazy. Jeśli MySQL działa na tym samym serwerze, może **sam założyć bazę i użytkownika** (przez `sudo mysql`) z losowym hasłem.
+3. Pyta o adres i port aplikacji oraz opcjonalny login i hasło. Zapisuje `.env` z uprawnieniami 600 i losowym kluczem sesji.
+4. Tworzy tabele i, jeśli chcesz, wczytuje układ szafy z inwentaryzacji (16 urządzeń).
+5. Instaluje i uruchamia usługę systemd `rack-inventory`.
 
-Na pytanie o adres nasłuchu zostaw `127.0.0.1`, jeśli aplikacja ma działać za Apache. Potem skonfiguruj Apache według sekcji [Apache, nginx i HTTPS](#apache-nginx-i-https). Adres `0.0.0.0` wybierz tylko wtedy, gdy nie używasz serwera WWW i chcesz wchodzić bezpośrednio na `http://IP-SERWERA:3080`.
+Na pytanie o adres nasłuchu zostaw `127.0.0.1`, jeśli aplikacja ma działać za Apache. Potem skonfiguruj Apache według sekcji [Apache, nginx i HTTPS](#apache-nginx-i-https).
 
 ---
 
 ## Instalacja ręczna
 
-### 1. Baza i użytkownik MySQL
+### 1. Baza i użytkownik
 
 ```bash
 sudo mysql
@@ -110,7 +199,7 @@ FLUSH PRIVILEGES;
 EXIT;
 ```
 
-Jeśli MySQL stoi na innym serwerze, zamiast `'rack'@'localhost'` użyj `'rack'@'IP-serwera-aplikacji'` (albo `'%'`). Upewnij się też, że MySQL nasłuchuje na sieci (`bind-address` w `/etc/mysql/mysql.conf.d/mysqld.cnf`).
+Jeśli baza stoi na innym serwerze, zamiast `'rack'@'localhost'` podaj IP serwera aplikacji. Upewnij się też, że MySQL nasłuchuje w sieci (`bind-address`).
 
 ### 2. Kod i zależności
 
@@ -129,26 +218,17 @@ chmod 600 .env
 nano .env
 ```
 
-| Zmienna | Opis | Domyślnie |
-|---|---|---|
-| `HOST` | Adres nasłuchu. `127.0.0.1` za Apache/nginx, `0.0.0.0` dla całej sieci LAN bez serwera WWW | `127.0.0.1` |
-| `PORT` | Port aplikacji | `3080` |
-| `DB_HOST` / `DB_PORT` | Serwer MySQL | `localhost` / `3306` |
-| `DB_NAME` | Nazwa bazy | `rack_inventory` |
-| `DB_USER` / `DB_PASSWORD` | Użytkownik bazy | `rack` / – |
-| `DB_SOCKET` | Opcjonalnie gniazdo unix, np. `/run/mysqld/mysqld.sock` | – |
-| `AUTH_USER` / `AUTH_PASSWORD` | Logowanie do aplikacji. Puste = wyłączone. Hasło ze znakami `#`, `$`, `` ` `` lub spacją wpisz w apostrofach | – |
-| `HISTORY_DAYS` | Ile dni trzymać historię zmian portów. `0` = bez limitu | `0` |
+Wszystkie zmienne są opisane w sekcji [Konfiguracja (.env)](#konfiguracja-env).
 
-### 4. Tabele i układ racka
+### 4. Tabele i układ szafy
 
 ```bash
-npm run db:seed     # tworzy tabele i wczytuje 16 urządzeń (tylko gdy baza jest pusta)
+npm run db:seed     # tabele + 16 urządzeń z inwentaryzacji (tylko gdy baza jest pusta)
 # albo
 npm run db:init     # same tabele; urządzenia dodasz w aplikacji
 ```
 
-### 5. Test uruchomienia
+### 5. Próbne uruchomienie
 
 ```bash
 npm start
@@ -156,38 +236,54 @@ npm start
 curl http://127.0.0.1:3080/api/health   # {"ok":true}
 ```
 
-Zatrzymaj przez `Ctrl+C`.
+Zatrzymasz je przez `Ctrl+C`.
 
 ### 6. Usługa systemd
 
 ```bash
 sudo cp deploy/rack-inventory.service /etc/systemd/system/
-sudo nano /etc/systemd/system/rack-inventory.service   # popraw User, WorkingDirectory, ścieżkę do node (which node)
+sudo nano /etc/systemd/system/rack-inventory.service   # User, WorkingDirectory, ścieżka do node (which node)
 sudo systemctl daemon-reload
 sudo systemctl enable --now rack-inventory
 sudo systemctl status rack-inventory
 ```
 
-Logi: `sudo journalctl -u rack-inventory -f`
+Logi aplikacji: `sudo journalctl -u rack-inventory -f`
+
+---
+
+## Konfiguracja (.env)
+
+| Zmienna | Opis | Domyślnie |
+|---|---|---|
+| `HOST` | Adres nasłuchu: `127.0.0.1` za Apache/nginx, `0.0.0.0` dla całej sieci LAN bez serwera WWW | `127.0.0.1` |
+| `PORT` | Port aplikacji | `3080` |
+| `DB_HOST` / `DB_PORT` | Serwer bazy | `localhost` / `3306` |
+| `DB_NAME` | Nazwa bazy | `rack_inventory` |
+| `DB_USER` / `DB_PASSWORD` | Użytkownik i hasło bazy | `rack` / – |
+| `DB_SOCKET` | Opcjonalnie gniazdo unix zamiast TCP, np. `/run/mysqld/mysqld.sock` | – |
+| `AUTH_USER` / `AUTH_PASSWORD` | Login i hasło do aplikacji. Puste = logowanie wyłączone | – |
+| `SESSION_SECRET` | Klucz podpisujący sesje (`openssl rand -hex 32`). Bez niego po każdym restarcie trzeba logować się ponownie | – |
+| `HISTORY_DAYS` | Ile dni trzymać historię zmian portów. `0` = bez limitu | `0` |
+
+Wartości ze znakami `#`, `$`, `` ` `` lub spacją wpisuj w apostrofach, np. `AUTH_PASSWORD='ab#c d'`. Po zmianie `.env` zrestartuj usługę: `sudo systemctl restart rack-inventory`.
 
 ---
 
 ## Apache, nginx i HTTPS
 
-Najpierw upewnij się, że aplikacja działa lokalnie: `curl http://127.0.0.1:3080/api/health` powinno zwrócić `{"ok":true}`. W `.env` ustaw `HOST=127.0.0.1`, żeby port 3080 nie był dostępny z sieci z pominięciem Apache.
+Najpierw sprawdź, czy aplikacja działa lokalnie: `curl http://127.0.0.1:3080/api/health` powinno zwrócić `{"ok":true}`. W `.env` zostaw `HOST=127.0.0.1`, żeby port 3080 nie był dostępny z sieci z pominięciem serwera WWW.
 
 ### Apache
 
-Gotowa konfiguracja z komentarzami jest w [`deploy/apache.conf`](deploy/apache.conf). Na początek włącz moduły proxy (jednorazowo):
+Gotowa konfiguracja z komentarzami jest w [`deploy/apache.conf`](deploy/apache.conf). Najpierw jednorazowo włącz moduły:
 
 ```bash
 sudo a2enmod proxy proxy_http headers
 sudo systemctl restart apache2
 ```
 
-Potem wybierz jeden z dwóch wariantów.
-
-**Wariant A: osobny adres**, np. `http://rack.firma.lan` albo `https://rack.twojadomena.pl`. Wymaga wpisu DNS (albo wpisu w `hosts` na komputerach w LAN) wskazującego na serwer.
+**Wariant A: osobny adres**, np. `http://rack.firma.lan`. Wymaga wpisu w DNS albo w pliku `hosts` na komputerach w sieci.
 
 ```bash
 sudo cp deploy/apache.conf /etc/apache2/sites-available/rack-inventory.conf
@@ -197,7 +293,7 @@ sudo apache2ctl configtest            # ma wypisać: Syntax OK
 sudo systemctl reload apache2
 ```
 
-**Wariant B: podkatalog strony, która już działa**, np. `http://serwer/rack/`. Bez DNS, a reszta strony (np. PHP) działa jak dotąd. Dopisz do istniejącego `<VirtualHost>` (zwykle `/etc/apache2/sites-available/000-default.conf`, a przy HTTPS także `default-ssl.conf`) przed `</VirtualHost>`:
+**Wariant B: podkatalog strony, która już działa**, np. `http://serwer/rack/`. Nie wymaga DNS, a reszta strony (np. PHP) działa jak dotąd. Dopisz do istniejącego `<VirtualHost>` (zwykle `000-default.conf`, a przy HTTPS także jego wersji SSL) przed `</VirtualHost>`:
 
 ```apache
 RedirectMatch 301 ^/rack$ /rack/
@@ -208,18 +304,18 @@ RedirectMatch 301 ^/rack$ /rack/
 </Location>
 ```
 
-Potem `sudo apache2ctl configtest && sudo systemctl reload apache2`. Ukośnik na końcu `/rack/` jest ważny: frontend używa ścieżek względnych, dlatego `/rack` jest przekierowywane na `/rack/`.
+Potem `sudo apache2ctl configtest && sudo systemctl reload apache2`. Końcowy ukośnik w `/rack/` jest ważny, bo frontend używa ścieżek względnych.
 
-**HTTPS:**
+### HTTPS
 
-- Z publiczną domeną (Let's Encrypt, certyfikat odnawia się sam):
+- **Publiczna domena:** certyfikat Let's Encrypt, odnawia się sam.
   ```bash
   sudo apt install -y certbot python3-certbot-apache
   sudo certbot --apache -d rack.twojadomena.pl
   ```
-- Tylko w LAN, bez domeny: certyfikat self-signed. Instrukcja jest w komentarzach w `deploy/apache.conf`. Przeglądarka raz zapyta o wyjątek bezpieczeństwa.
+- **Tylko sieć lokalna:** własny certyfikat (self-signed). Polecenia są w komentarzach w `deploy/apache.conf`. Przeglądarka przy pierwszym wejściu pokaże ostrzeżenie. Żeby zniknęło na stałe, zaimportuj certyfikat (`.crt`) na komputerach i telefonach jako zaufany.
 
-Logi Apache dla aplikacji: `/var/log/apache2/rack-inventory-error.log` i `rack-inventory-access.log` (wariant A) albo logi strony głównej (wariant B).
+Gdy włączone jest logowanie, używaj aplikacji **tylko przez HTTPS**. Inaczej hasło i ciasteczko sesji idą przez sieć otwartym tekstem.
 
 ### nginx
 
@@ -238,49 +334,32 @@ HTTPS: `sudo apt install -y certbot python3-certbot-nginx && sudo certbot --ngin
 
 ## Logowanie
 
-Ustaw w `.env`:
+Ustaw w `.env` i zrestartuj usługę:
 
 ```
 AUTH_USER='admin'
 AUTH_PASSWORD='mocne-haslo'
-SESSION_SECRET='wynik: openssl rand -hex 32'
+SESSION_SECRET='wynik polecenia: openssl rand -hex 32'
 ```
 
-Potem zrestartuj usługę: `sudo systemctl restart rack-inventory`.
-
-- Aplikacja pokazuje **stronę logowania**. Po zalogowaniu w nagłówku jest przycisk **Wyloguj**.
-- Sesja trwa 12 godzin. Z zaznaczonym „Zapamiętaj mnie” trwa 30 dni na danym urządzeniu.
-- Po 10 nieudanych próbach z jednego adresu logowanie jest blokowane na 15 minut.
-- Zmiana hasła (albo `SESSION_SECRET`) wylogowuje wszystkich. Bez `SESSION_SECRET` trzeba logować się ponownie po każdym restarcie aplikacji.
-- Jeśli sesja wygaśnie w trakcie edycji portu, aplikacja nie przeniesie Cię na stronę logowania. Pokaże komunikat z linkiem do zalogowania w nowej karcie, żeby wpisane dane nie przepadły.
-- Skrypty mogą dalej korzystać z API przez HTTP Basic: `curl -u admin:hasło https://serwer/rack/api/state`.
-
-Jeśli aplikacja jest dostępna poza localhost, używaj jej **tylko przez HTTPS**. W przeciwnym razie hasło i ciasteczko sesji idą przez sieć otwartym tekstem.
-
----
-
-## Przeniesienie danych z wersji w Claude
-
-Jeśli zacząłeś inwentaryzację w artefakcie w Claude:
-
-1. W artefakcie kliknij **Kopia JSON** i zapisz plik.
-2. W tej aplikacji kliknij **Import**, wybierz plik i potwierdź.
-
-Format jest ten sam. Urządzenia o tych samych identyfikatorach zostaną nadpisane razem z portami i połączeniami. Kopie bez racków (np. z artefaktu albo sprzed wersji z wieloma rackami) trafiają do racka, który jest otwarty w chwili importu. Urządzenia, które już są w bazie, zostają w swoich rackach.
+- Aplikacja pokazuje **stronę logowania**, z wyborem języka i motywu. W nagłówku jest przycisk **Wyloguj**.
+- **Czas sesji:** 12 godzin, a z zaznaczonym **Zapamiętaj mnie** 30 dni na danym urządzeniu.
+- Po **10 nieudanych próbach** z jednego adresu logowanie jest blokowane na 15 minut.
+- **Zmiana hasła** albo `SESSION_SECRET` wylogowuje wszystkich.
+- **Wygaśnięcie sesji w trakcie edycji portu** nie przenosi od razu na stronę logowania. Aplikacja pokazuje link do zalogowania w nowej karcie, żeby wpisane dane nie przepadły.
+- **Skrypty** mogą korzystać z API przez HTTP Basic: `curl -u admin:hasło https://serwer/rack/api/state`.
 
 ---
 
 ## Kopie zapasowe
 
-Ręcznie:
-
 ```bash
 cd /opt/rack-inventory && bash backup.sh
 ```
 
-Skrypt robi `mysqldump` do `backups/rack_DATA.sql.gz` i trzyma 30 ostatnich plików. Pliki kopii czyta tylko właściciel (uprawnienia 600), bo zawierają całą bazę.
+Skrypt zapisuje zrzut bazy do `backups/rack_DATA.sql.gz` i trzyma 30 ostatnich plików. Kopie czyta tylko właściciel (uprawnienia 600), bo zawierają całą bazę.
 
-Automatycznie, codziennie o 2:15 (`crontab -e`):
+Codzienna kopia o 2:15 (`crontab -e`):
 
 ```
 15 2 * * * bash /opt/rack-inventory/backup.sh >/dev/null 2>&1
@@ -292,7 +371,9 @@ Przywracanie:
 gunzip < backups/rack_2026-10-23_0215.sql.gz | mysql -u rack -p rack_inventory
 ```
 
-Niezależnie od tego w aplikacji jest przycisk **Kopia JSON**, który zapisuje cały stan do pliku.
+Przycisk **Kopia JSON** w aplikacji zapisuje dodatkowo cały stan do pliku, który można zaimportować z powrotem.
+
+> Kopia na tym samym dysku nie chroni przed jego awarią. Kopiuj katalog `backups/` także na inny komputer albo NAS.
 
 ---
 
@@ -303,82 +384,19 @@ cd /opt/rack-inventory
 bash backup.sh
 git pull
 npm install --omit=dev
-npm run db:init                     # bezpieczne: tworzy brakujące tabele i aktualizuje strukturę bazy
 sudo systemctl restart rack-inventory
 ```
 
-Aplikacja przy starcie sama aktualizuje strukturę bazy (`src/migrate.js`), więc `npm run db:init` jest tylko dodatkowym zabezpieczeniem. Przy przejściu na wersję z wieloma rackami wszystkie istniejące urządzenia trafiają do racka „Rack 1”. Jego nazwę zmienisz w aplikacji (✎ obok listy racków).
+Struktura bazy aktualizuje się sama przy starcie aplikacji. Przy przejściu na wersję z wieloma rackami wszystkie istniejące urządzenia trafiają do racka „Rack 1”. Jego nazwę zmienisz w aplikacji przyciskiem ✎.
 
 ---
 
-## Jak pracować przy szafie
+## Import danych z wersji w Claude
 
-1. Otwórz aplikację na telefonie i wybierz urządzenie z listy szafy.
-2. Kliknij port. Ustaw status, a w polu **Patchcord w racku** wybierz drugi koniec, np. switch PKN01 port 12. Drugi koniec uzupełni się sam.
-3. Na patchpanelu wpisz **Dokąd prowadzi**, np. pokój i numer gniazda.
-4. Wybierz kolor kabla, wpisz długość. Gdy kabel jest przetestowany, zaznacz **Zweryfikowany fizycznie**.
-5. **Zapisz i dalej ›** przejdzie na kolejny port.
-6. Puste gniazda oznaczaj hurtem: **Zaznacz wiele** → zaznacz porty → **Wolny**.
-7. Pole **Plan po przebudowie** opisuje, gdzie port ma trafić po porządkowaniu racka.
+1. W artefakcie w Claude kliknij **Kopia JSON** i zapisz plik.
+2. W aplikacji kliknij **Import**, wybierz plik i potwierdź.
 
-Etykiety portów: patchpanele `A1…A24`, `B1…`, switche `PKN01:1…PKN01:52` (49–52 to SFP), `CAM-1…`.
-
----
-
-## Struktura bazy i API
-
-Tabele (`sql/schema.sql`):
-
-- `racks`: szafy (nazwa, lokalizacja, notatki, kolejność na liście).
-- `devices`: urządzenia w szafie (rack, typ, liczba portów RJ45 i SFP, stan, model, kolejność w racku).
-- `ports`: tylko porty, które zostały opisane. Połączenie to `link_device` + `link_port`, zawsze zapisywane po obu stronach.
-- `port_history`: stan przed i po każdej zmianie portu, z autorem i czasem.
-
-API (JSON):
-
-| Metoda | Adres | Opis |
-|---|---|---|
-| GET | `/api/health` | Test połączenia z bazą |
-| GET | `/api/state` | Cały stan: `racks` i `devices` z portami |
-| GET | `/api/session` | Czy logowanie jest włączone i kto jest zalogowany |
-| POST | `/api/seed` | Wczytuje układ z inwentaryzacji do `{rack}` (tylko gdy baza jest pusta) |
-| POST | `/api/racks` | Dodaje rack `{name, location, notes}` |
-| PUT | `/api/racks/:id` | Edytuje rack |
-| DELETE | `/api/racks/:id` | Usuwa pusty rack (ostatni zostaje zawsze) |
-| POST | `/api/racks/reorder` | `{ids:[…]}` – kolejność racków na liście |
-| POST | `/api/devices` | Dodaje urządzenie (`rack` – do którego racka) |
-| PUT | `/api/devices/:id` | Edytuje urządzenie; `rack` przenosi je do innego racka |
-| DELETE | `/api/devices/:id` | Usuwa urządzenie, rozłącza patchcordy do niego |
-| POST | `/api/devices/reorder` | `{ids:[…]}` – nowa kolejność urządzeń w racku |
-| PUT | `/api/ports/:dev/:n` | Zapis portu (z połączeniem po obu stronach). Opcjonalne `baseRev` (pole `rev` z `/api/state`): jeśli port zmienił się w międzyczasie, odpowiedź to 409 |
-| POST | `/api/ports/bulk` | `{dev, ports:[…], status}` lub `{…, verified:true}` |
-| GET | `/api/ports/:dev/:n/history` | 30 ostatnich zmian portu |
-| GET | `/api/export.csv` | Eksport do Excela (średnik, UTF-8 z BOM) |
-| GET | `/api/export.json` | Pełna kopia JSON |
-| POST | `/api/import` | Import kopii JSON `{racks, devices, rack}` (`rack` – dokąd trafiają urządzenia bez racka) |
-
-Przykład zapisu portu z terminala:
-
-```bash
-curl -X PUT http://127.0.0.1:3080/api/ports/pkn01/12 \
-  -H 'Content-Type: application/json' \
-  -d '{"status":"used","link":{"dev":"pp-b","port":"7"},"color":"czerwony","vlan":"10"}'
-```
-
----
-
-## Testy
-
-`test/i18n.test.js` sprawdza kompletność tłumaczeń: każdy klucz użyty w kodzie musi istnieć we wszystkich językach. Nie wymaga bazy. Teksty interfejsu są w `public/i18n.js`. Nowy napis dodajesz tam we wszystkich czterech językach.
-
-Testy API (`test/api.test.js`) działają na prawdziwej bazie MySQL/MariaDB. **Czyszczą wszystkie tabele**, więc użyj osobnej bazy, której nazwa zawiera „test”:
-
-```bash
-sudo mysql -e "CREATE DATABASE rack_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON rack_test.* TO 'rack'@'localhost';"
-TEST_DB_NAME=rack_test TEST_DB_USER=rack TEST_DB_PASSWORD='hasło' npm test
-```
-
-Bez `TEST_DB_NAME` testy są pomijane. Opcjonalnie: `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_PORT` (port serwera testowego, domyślnie 39080).
+Urządzenia o tych samych identyfikatorach zostaną nadpisane razem z portami i patchcordami. Kopie bez racków trafiają do racka, który jest otwarty w chwili importu. Urządzenia, które już są w bazie, zostają w swoich rackach.
 
 ---
 
@@ -386,13 +404,125 @@ Bez `TEST_DB_NAME` testy są pomijane. Opcjonalnie: `TEST_DB_HOST`, `TEST_DB_POR
 
 | Objaw | Co sprawdzić |
 |---|---|
-| `Access denied for user 'rack'@'localhost'` | Hasło w `.env`. Czy użytkownik ma host `localhost`, a `DB_HOST=localhost`? Dla `127.0.0.1` MySQL może traktować to jako inny host. |
-| `ECONNREFUSED 127.0.0.1:3306` | MySQL nie działa albo nasłuchuje tylko na gnieździe. Ustaw `DB_SOCKET=/run/mysqld/mysqld.sock`. |
-| `Unknown collation utf8mb4_0900_ai_ci` | Starszy MariaDB. Schemat używa `utf8mb4_unicode_ci`, więc to dotyczy tylko ręcznie utworzonej bazy. Utwórz ją z `utf8mb4_unicode_ci`. |
-| Strona nie otwiera się z innego komputera | Za Apache: czy firewall przepuszcza HTTP/HTTPS (`sudo ufw allow 'Apache Full'`)? Bez Apache: `HOST=127.0.0.1` w `.env` oznacza tylko lokalnie. Ustaw `0.0.0.0` i `sudo ufw allow 3080/tcp`. |
-| Usługa nie startuje | `sudo journalctl -u rack-inventory -n 50`. Najczęściej zła ścieżka do `node` albo brak praw do katalogu. |
-| Apache: **503 Service Unavailable** | Node.js nie działa: `sudo systemctl status rack-inventory`. Sprawdź też, czy port w `ProxyPass` zgadza się z `PORT` w `.env`. |
-| Apache: `Invalid command 'ProxyPass'` albo `'RequestHeader'` przy `configtest` | Nie włączono modułów: `sudo a2enmod proxy proxy_http headers`. |
-| Apache: strona startowa Apache („It works!”) zamiast aplikacji | Wariant A: wpisany adres nie zgadza się z `ServerName`/`ServerAlias`, więc Apache użył domyślnej strony. Wariant B: brakuje ukośnika, wejdź na `/rack/`. |
-| Pod `/rack/` strona bez stylów, błędy 404 w konsoli | Adres bez końcowego ukośnika. Dodaj `RedirectMatch 301 ^/rack$ /rack/`. |
-| 413 przy imporcie | Apache: `LimitRequestBody 10485760`. nginx: `client_max_body_size 10m;`. Obie wartości są w plikach w `deploy/`. |
+| Usługa nie startuje | `sudo journalctl -u rack-inventory -n 50`. Najczęściej zła ścieżka do `node`, brak praw do katalogu albo błędne dane bazy w `.env`. |
+| `Access denied for user 'rack'@'localhost'` | Hasło w `.env`. Czy użytkownik bazy ma host `localhost`, a w `.env` jest `DB_HOST=localhost`? Dla `127.0.0.1` MySQL może traktować to jako inny host. |
+| `ECONNREFUSED 127.0.0.1:3306` | Baza nie działa albo nasłuchuje tylko na gnieździe. Ustaw `DB_SOCKET=/run/mysqld/mysqld.sock`. |
+| `Unknown collation utf8mb4_0900_ai_ci` | Starsza MariaDB. Utwórz bazę z `utf8mb4_unicode_ci`. |
+| Strona nie otwiera się z innego komputera | Za Apache: czy firewall przepuszcza HTTP/HTTPS (`sudo ufw allow 'Apache Full'`)? Bez Apache: `HOST=127.0.0.1` oznacza dostęp tylko lokalnie. |
+| Apache: **503 Service Unavailable** | Aplikacja nie działa (`sudo systemctl status rack-inventory`) albo port w `ProxyPass` nie zgadza się z `PORT` w `.env`. |
+| Apache: `Invalid command 'ProxyPass'` lub `'RequestHeader'` | Nie włączono modułów: `sudo a2enmod proxy proxy_http headers`. |
+| Strona startowa Apache („It works!”) zamiast aplikacji | Wariant A: adres nie zgadza się z `ServerName`. Wariant B: wejdź na `/rack/` (z ukośnikiem). |
+| Pod `/rack/` strona bez stylów | Brak przekierowania `/rack` → `/rack/`. Dodaj `RedirectMatch 301 ^/rack$ /rack/`. |
+| 413 przy imporcie | Apache: `LimitRequestBody 10485760`. nginx: `client_max_body_size 10m;`. |
+| Po każdym restarcie trzeba się logować | Brak `SESSION_SECRET` w `.env`. |
+| „Za dużo nieudanych prób” | Odczekaj 15 minut albo zrestartuj usługę. |
+| Ostrzeżenie o certyfikacie w przeglądarce | Certyfikat self-signed. Zaimportuj go jako zaufany albo użyj Let's Encrypt. |
+
+---
+
+## Struktura projektu
+
+```
+src/
+  server.js      serwer HTTP i REST API (Express), logowanie, eksport/import
+  migrate.js     schemat bazy i migracje (uruchamiane przy starcie)
+  db.js          pula połączeń MySQL, odczyt .env
+  init-db.js     npm run db:init / db:seed
+  template.js    układ szafy z inwentaryzacji (16 urządzeń)
+public/
+  index.html     aplikacja
+  login.html     strona logowania
+  app.js         logika interfejsu (renderowanie, edycja portów, panel Aruba)
+  i18n.js        tłumaczenia (pl, en, nl, cs) i przełącznik motywu
+  style.css      wygląd, motyw jasny i ciemny
+sql/schema.sql   tabele (idempotentny)
+deploy/          apache.conf, nginx.conf, rack-inventory.service
+docs/            poradnik instalacji serwera WWW, zrzuty ekranu
+test/            testy API i tłumaczeń
+install.sh       instalator
+backup.sh        kopia bazy
+```
+
+---
+
+## Baza danych
+
+| Tabela | Zawartość |
+|---|---|
+| `racks` | Szafy: nazwa, lokalizacja, notatki, kolejność na liście. |
+| `devices` | Urządzenia: rack, typ (`patch`, `switch`, `fiber`, `other`), liczba portów RJ45 i SFP, stan, model, kolejność w racku. |
+| `ports` | Tylko opisane porty. Patchcord to `link_device` + `link_port`, zawsze zapisywany po obu stronach. `updated_at` służy do wykrywania równoczesnej edycji. |
+| `port_history` | Stan portu przed i po każdej zmianie, z autorem i czasem. |
+
+Kolory kabli są zapisane w bazie pod polskimi nazwami (`czerwony`, `niebieski`…), a interfejs i eksport CSV pokazują je w wybranym języku.
+
+---
+
+## API
+
+Wszystkie adresy są względne wobec katalogu aplikacji, np. `https://serwer/rack/api/state`. Przy włączonym logowaniu wymagają sesji albo nagłówka HTTP Basic.
+
+| Metoda | Adres | Opis |
+|---|---|---|
+| GET | `/api/health` | Test połączenia z bazą |
+| GET | `/api/state` | Cały stan: `racks` i `devices` z portami |
+| GET | `/api/session` | Czy logowanie jest włączone i kto jest zalogowany |
+| POST | `/api/racks` | Dodaje rack `{name, location, notes}` |
+| PUT | `/api/racks/:id` | Edytuje rack |
+| DELETE | `/api/racks/:id` | Usuwa pusty rack (ostatni rack zostaje zawsze) |
+| POST | `/api/racks/reorder` | `{ids:[…]}`: kolejność racków |
+| POST | `/api/devices` | Dodaje urządzenie (`rack`: do którego racka) |
+| PUT | `/api/devices/:id` | Edytuje urządzenie. `rack` przenosi je do innego racka. Zmniejszenie liczby portów usuwa porty spoza zakresu |
+| DELETE | `/api/devices/:id` | Usuwa urządzenie i odpina prowadzące do niego patchcordy |
+| POST | `/api/devices/reorder` | `{ids:[…]}`: kolejność urządzeń w racku |
+| PUT | `/api/ports/:dev/:n` | Zapis portu z patchcordem po obu stronach. Opcjonalne `baseRev` (pole `rev` z `/api/state`): gdy port zmienił się w międzyczasie, odpowiedź to 409 |
+| POST | `/api/ports/bulk` | `{dev, ports:[…], status}` albo `{dev, ports:[…], verified:true}` |
+| GET | `/api/ports/:dev/:n/history` | 30 ostatnich zmian portu |
+| POST | `/api/seed` | Wczytuje układ z inwentaryzacji do `{rack}` (tylko do pustej bazy) |
+| GET | `/api/export.csv?lang=pl` | Eksport CSV (średnik, UTF-8 z BOM). `lang`: `pl`, `en`, `nl`, `cs` |
+| GET | `/api/export.json` | Pełna kopia JSON |
+| POST | `/api/import` | Import kopii `{racks, devices, rack}`. `rack` wskazuje, dokąd trafiają urządzenia bez racka |
+
+Błędy mają postać `{"error": "…", "code": "…", "params": {…}}`. `error` to komunikat po polsku, a `code` i `params` pozwalają pokazać go w innym języku (klucze `err.*` w `public/i18n.js`).
+
+Przykład zapisu portu:
+
+```bash
+curl -u admin:hasło -X PUT https://serwer/rack/api/ports/pkn01/12 \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"used","link":{"dev":"pp-b","port":"7"},"color":"czerwony","vlan":"10"}'
+```
+
+---
+
+## Tłumaczenia
+
+Wszystkie napisy interfejsu są w `public/i18n.js`, w słownikach `pl`, `en`, `nl` i `cs`.
+- W HTML napisy oznacza się atrybutami `data-i18n` (tekst), `data-i18n-ph` (placeholder), `data-i18n-title` i `data-i18n-aria`.
+- W JavaScripcie używa się funkcji `t('klucz', {parametry})`.
+- Nowy napis dodajesz we wszystkich czterech słownikach. Test `test/i18n.test.js` sprawdza, czy niczego nie brakuje.
+- Nowy język to kolejny słownik oraz wpis w `LANGS` w `public/i18n.js` i w `CSV_TEXT` w `src/server.js`.
+
+---
+
+## Testy
+
+```bash
+npm test
+```
+
+- `test/i18n.test.js` sprawdza kompletność tłumaczeń. Nie wymaga bazy.
+- `test/api.test.js` testuje API na prawdziwej bazie: patchcordy, racki, migracje, import, konflikty, logowanie, eksport. Testy **czyszczą wszystkie tabele**, dlatego działają tylko na bazie, której nazwa zawiera „test”:
+
+```bash
+sudo mysql -e "CREATE DATABASE rack_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; GRANT ALL ON rack_test.* TO 'rack'@'localhost';"
+TEST_DB_NAME=rack_test TEST_DB_USER=rack TEST_DB_PASSWORD='hasło' npm test
+```
+
+Bez `TEST_DB_NAME` testy API są pomijane. Opcjonalne zmienne: `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_PORT` (port serwera testowego, domyślnie 39080).
+
+---
+
+## Licencja
+
+MIT (zob. `package.json`).
