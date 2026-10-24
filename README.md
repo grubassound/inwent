@@ -9,9 +9,56 @@ Aplikacja webowa do inwentaryzacji szaf sieciowych. Dla każdego portu patchpane
 
 Dane trzymane są w MySQL/MariaDB, a każda zmiana portu trafia do historii.
 
-![Rack Inventory – szafa, przedni panel switcha i karta portu](docs/img/ekran-jasny.png)
+## Instalacja na Proxmox VE
 
-### Galeria
+Jedno polecenie w powłoce węzła Proxmox (**Datacenter → węzeł → Shell** albo SSH jako root) tworzy kontener LXC z Debianem 12 i gotową, działającą aplikacją:
+
+```bash
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/grubassound/inwent/main/proxmox/rack-inventory.sh)"
+```
+
+Skrypt najpierw pyta, czy użyć ustawień domyślnych (1 rdzeń, 1 GB RAM, dysk 4 GB, sieć `vmbr0` z DHCP). Po wybraniu **Nie** możesz podać własne: ID i nazwę kontenera, zasoby, stały adres IP, bramę, VLAN oraz login i hasło do aplikacji.
+
+Potem skrypt:
+1. pobiera szablon Debiana 12 i tworzy kontener nieuprzywilejowany (z autostartem razem z Proxmoxem),
+2. instaluje w nim Node.js 22, MariaDB i Apache,
+3. pobiera aplikację z GitHuba i tworzy bazę z losowym hasłem,
+4. zapisuje `.env`, uruchamia usługę i włącza HTTPS z własnym certyfikatem (HTTP przekierowuje na HTTPS),
+5. ustawia codzienną kopię bazy i sprawdza, czy aplikacja odpowiada.
+
+Instalacja trwa kilka minut. Na końcu skrypt wypisuje adres, np. `https://192.168.1.77/`.
+
+**Domyślne logowanie: `admin` / `adminadmin`.** To hasło jest jawne w tym repozytorium, więc zmień je od razu po instalacji:
+
+```bash
+pct enter <ID kontenera>
+rack-inventory passwd
+```
+
+Polecenia w kontenerze:
+
+| Polecenie | Co robi |
+|---|---|
+| `rack-inventory update` | Kopia bazy, pobranie nowej wersji z GitHuba, restart |
+| `rack-inventory passwd` | Zmiana loginu i hasła (wylogowuje wszystkich) |
+| `rack-inventory backup` | Kopia bazy teraz (do `/opt/rack-inventory/backups`) |
+| `rack-inventory status` | Stan usługi i adres aplikacji |
+
+Z węzła Proxmox wywołasz je bez wchodzenia do kontenera, np. `pct exec 105 -- rack-inventory update`.
+
+Na zwykłym serwerze z Debianem 12, bez Proxmoxa, ten sam instalator uruchomisz jako root:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/grubassound/inwent/main/proxmox/ct-install.sh)"
+```
+
+Inne sposoby: [instalator `install.sh`](#szybka-instalacja) na dowolnym serwerze z Debianem lub Ubuntu, z pytaniami o każde ustawienie, albo [instalacja ręczna](#instalacja-ręczna) krok po kroku.
+
+---
+
+## Jak to wygląda
+
+![Rack Inventory – szafa, przedni panel switcha i karta portu](docs/img/ekran-jasny.png)
 
 **Przedni panel switcha w stylu Aruba.** Kolor ramki pokazuje status portu, a wtyczka kolor kabla. Panel można przybliżać i oddalać.
 
@@ -39,31 +86,35 @@ Dane trzymane są w MySQL/MariaDB, a każda zmiana portu trafia do historii.
 
 ## Spis treści
 
+**Start**
+1. [Instalacja na Proxmox VE (jedna linia)](#instalacja-na-proxmox-ve)
+
 **Dla użytkownika**
-1. [Co potrafi](#co-potrafi)
-2. [Jak pracować przy szafie](#jak-pracować-przy-szafie)
+
+2. [Co potrafi](#co-potrafi)
+3. [Jak pracować przy szafie](#jak-pracować-przy-szafie)
 
 **Dla administratora**
 
-3. [Jak to działa na serwerze](#jak-to-działa-na-serwerze)
-4. [Wymagania](#wymagania)
-5. [Szybka instalacja](#szybka-instalacja)
-6. [Instalacja ręczna](#instalacja-ręczna)
-7. [Konfiguracja (.env)](#konfiguracja-env)
-8. [Apache, nginx i HTTPS](#apache-nginx-i-https)
-9. [Logowanie](#logowanie)
-10. [Kopie zapasowe](#kopie-zapasowe)
-11. [Aktualizacja](#aktualizacja)
-12. [Import danych z wersji w Claude](#import-danych-z-wersji-w-claude)
-13. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
+4. [Jak to działa na serwerze](#jak-to-działa-na-serwerze)
+5. [Wymagania](#wymagania)
+6. [Szybka instalacja (install.sh)](#szybka-instalacja)
+7. [Instalacja ręczna](#instalacja-ręczna)
+8. [Konfiguracja (.env)](#konfiguracja-env)
+9. [Apache, nginx i HTTPS](#apache-nginx-i-https)
+10. [Logowanie](#logowanie)
+11. [Kopie zapasowe](#kopie-zapasowe)
+12. [Aktualizacja](#aktualizacja)
+13. [Import danych z wersji w Claude](#import-danych-z-wersji-w-claude)
+14. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
 
 **Dla programisty**
 
-14. [Struktura projektu](#struktura-projektu)
-15. [Baza danych](#baza-danych)
-16. [API](#api)
-17. [Tłumaczenia](#tłumaczenia)
-18. [Testy](#testy)
+15. [Struktura projektu](#struktura-projektu)
+16. [Baza danych](#baza-danych)
+17. [API](#api)
+18. [Tłumaczenia](#tłumaczenia)
+19. [Testy](#testy)
 
 ---
 
@@ -169,8 +220,6 @@ git clone https://github.com/grubassound/inwent.git /opt/rack-inventory
 cd /opt/rack-inventory
 bash install.sh
 ```
-
-> Repozytorium jest prywatne. Przy `git clone` przez HTTPS podaj login GitHub i **Personal Access Token** jako hasło (GitHub → Settings → Developer settings → Personal access tokens, uprawnienie „Contents: Read”). Możesz też sklonować przez SSH: `git clone git@github.com:grubassound/inwent.git`.
 
 Instalator po kolei:
 
@@ -379,6 +428,10 @@ Przycisk **Kopia JSON** w aplikacji zapisuje dodatkowo cały stan do pliku, któ
 
 ## Aktualizacja
 
+W kontenerze z Proxmoxa wystarczy jedno polecenie (robi też kopię bazy): `rack-inventory update`, albo z węzła: `pct exec ID -- rack-inventory update`.
+
+Przy instalacji przez `install.sh` lub ręcznej:
+
 ```bash
 cd /opt/rack-inventory
 bash backup.sh
@@ -417,6 +470,8 @@ Urządzenia o tych samych identyfikatorach zostaną nadpisane razem z portami i 
 | Po każdym restarcie trzeba się logować | Brak `SESSION_SECRET` w `.env`. |
 | „Za dużo nieudanych prób” | Odczekaj 15 minut albo zrestartuj usługę. |
 | Ostrzeżenie o certyfikacie w przeglądarce | Certyfikat self-signed. Zaimportuj go jako zaufany albo użyj Let's Encrypt. |
+| Proxmox: „Kontener nie ma dostępu do internetu” | Kontener nie dostał adresu albo DNS. Sprawdź mostek i DHCP, a przy stałym IP bramę. Potem usuń kontener (`pct stop ID; pct destroy ID`) i uruchom skrypt ponownie. |
+| Proxmox: instalacja przerwana błędem | Skrypt zostawia kontener do diagnozy. Logi: `pct enter ID`, potem `journalctl -u rack-inventory`. Instalację w kontenerze można powtórzyć poleceniem z sekcji [Instalacja na Proxmox VE](#instalacja-na-proxmox-ve). |
 
 ---
 
@@ -437,6 +492,7 @@ public/
   style.css      wygląd, motyw jasny i ciemny
 sql/schema.sql   tabele (idempotentny)
 deploy/          apache.conf, nginx.conf, rack-inventory.service
+proxmox/         rack-inventory.sh (kontener LXC na Proxmox VE), ct-install.sh (instalacja na Debianie 12)
 docs/            poradnik instalacji serwera WWW, zrzuty ekranu
 test/            testy API i tłumaczeń
 install.sh       instalator
